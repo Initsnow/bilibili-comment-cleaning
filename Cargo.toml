@@ -1,0 +1,18 @@
+[package]
+name = "bilibili-comment-cleaning"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = [
+    "tokio",
+    "image",
+    "debug",
+] }
+regex = "1.10.6"
+reqwest = { version = "0.12.5", features = ["cookies"] }
+serde = "1.0.204"
+serde_json = "1.0.122"
+tokio = "1.39.2"
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
