@@ -181,7 +181,8 @@ impl Main {
             State::WaitingForCookie => center(
                 row![
                     text_input("Input cookie here", &self.cookie)
-                        .on_input(Message::CookieInputChanged),
+                        .on_input(Message::CookieInputChanged)
+                        .on_submit(Message::CookieSubmited(self.cookie.to_owned())),
                     button("enter").on_press(Message::CookieSubmited(self.cookie.to_owned())),
                 ]
                 .spacing(5),
@@ -248,7 +249,7 @@ struct Comment {
     remove_state: bool,
     notify_id: usize,
     /// 0为收到赞的评论 1为收到评论的评论
-    tp: u8
+    tp: u8,
 }
 async fn create_client(ck: String) -> Message {
     let a = ck
@@ -427,7 +428,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     content: content.clone(),
                     remove_state: true,
                     notify_id,
-                    tp: if like_or_reply{0}else{1}
+                    tp: if like_or_reply { 0 } else { 1 },
                 });
                 info!("Push Comment: {rpid}");
                 info!("Vec Counts:{}", v.len());
@@ -470,7 +471,7 @@ async fn remove_comment(cl: Arc<Client>, csrf: String, i: Comment) -> Message {
     let json_res: serde_json::Value = serde_json::from_str(res.as_str()).unwrap();
     if json_res["code"].as_i64().unwrap() == 0 {
         info!("remove reply {} success", i.rpid);
-        remove_notify(cl, i.notify_id, csrf,i.tp.to_string()).await;
+        remove_notify(cl, i.notify_id, csrf, i.tp.to_string()).await;
         Message::CommentDeleted { rpid: i.rpid }
     } else {
         error!("Can't remove comment. Response json: {}", json_res);
@@ -478,7 +479,7 @@ async fn remove_comment(cl: Arc<Client>, csrf: String, i: Comment) -> Message {
     }
 }
 
-async fn remove_notify(cl: Arc<Client>, id: usize, csrf: String,tp:String) {
+async fn remove_notify(cl: Arc<Client>, id: usize, csrf: String, tp: String) {
     let res = cl
         .post(
             "
