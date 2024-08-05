@@ -300,7 +300,6 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                 .await
                 .expect("Can't get first request");
             json = serde_json::from_str(&first.text().await.unwrap()).unwrap();
-            dbg!(&json);
             if like_or_reply {
                 notifys = &json["data"]["total"]["items"];
                 last_liketime = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
@@ -371,7 +370,12 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                         .replace("https://t.bilibili.com/", "")
                         .parse::<usize>()
                         .unwrap();
-                    r#type = 17;
+                    let business_id = i["item"]["business_id"].as_u64();
+                    r#type = if let Some(v) = business_id {
+                        v as usize
+                    } else {
+                        17
+                    };
                 } else if uri.contains("https://h.bilibili.com/ywh/") {
                     // 带图动态内评论
                     oid = uri
@@ -448,26 +452,43 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                 break;
             }
         }
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     v
 }
 
 async fn remove_comment(cl: Arc<Client>, csrf: String, i: Comment) -> Message {
-    let res = cl
-        .post("https://api.bilibili.com/x/v2/reply/del")
+    let res = if i.r#type == 11 {
+        cl.post(format!(
+            "https://api.bilibili.com/x/v2/reply/del?csrf={}",
+            csrf.clone()
+        ))
         .form(&[
             ("oid", i.oid.to_string()),
             ("type", i.r#type.to_string()),
             ("rpid", i.rpid.to_string()),
-            ("csrf", csrf.clone()),
         ])
         .send()
         .await
         .unwrap()
         .text()
         .await
-        .unwrap();
+        .unwrap()
+    } else {
+        cl.post("https://api.bilibili.com/x/v2/reply/del")
+            .form(&[
+                ("oid", i.oid.to_string()),
+                ("type", i.r#type.to_string()),
+                ("rpid", i.rpid.to_string()),
+                ("csrf", csrf.clone()),
+            ])
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    };
     let json_res: serde_json::Value = serde_json::from_str(res.as_str()).unwrap();
     if json_res["code"].as_i64().unwrap() == 0 {
         info!("remove reply {} success", i.rpid);
