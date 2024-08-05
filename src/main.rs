@@ -354,7 +354,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                 } else {
                     i["item"]["target_id"].as_u64().unwrap() as usize
                 };
-                if like_or_reply == false {
+                if !like_or_reply {
                     for i in &v {
                         if i.rpid == rpid {
                             info!("Duplicate Comment: {rpid}");
@@ -405,7 +405,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     // 电影（番剧？）内评论
                     oid = i["item"]["subject_id"].as_u64().unwrap() as usize;
                     r#type = 1;
-                } else if uri == "" {
+                } else if uri.is_empty() {
                     info!("No URI, Skiped");
                     continue;
                 } else {
@@ -418,7 +418,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                         .as_str()
                         .unwrap()
                         .to_string();
-                    if v == "" {
+                    if v.is_empty() {
                         i["item"]["title"].as_str().unwrap().to_string()
                     } else {
                         v
@@ -440,17 +440,15 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
         }
         // push完检测是否为end
         if like_or_reply {
-            if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() == true {
+            if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() {
                 like_or_reply = false;
                 last_liketime = None;
                 queryid = None;
                 info!("收到赞的评论处理完毕。");
             }
-        } else {
-            if json["data"]["cursor"]["is_end"].as_bool().unwrap() == true {
-                info!("收到评论的评论处理完毕。");
-                break;
-            }
+        } else if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
+            info!("收到评论的评论处理完毕。");
+            break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
