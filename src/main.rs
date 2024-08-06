@@ -19,6 +19,16 @@ static TAFFY: &[u8] = include_bytes!("assets/taffy.png");
 
 fn main() -> iced::Result {
     tracing_subscriber::fmt::init();
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if args.len() == 3 {
+            if args[1] == "--remove_notifys" {
+                let cookie = args[2].clone();
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(fetch_remove_notifys(cookie));
+            }
+        }
+    }
     let icon = iced::window::icon::from_file_data(TAFFY, None).unwrap();
 
     iced::application("BilibiliCommentCleaning", Main::update, Main::view)
@@ -523,5 +533,102 @@ https://api.bilibili.com/x/msgfeed/del",
         info!("remove notify {id} success");
     } else {
         error!("Can't remove notify. Response json: {}", json_res);
+    }
+}
+
+async fn fetch_remove_notifys(ck: String) {
+    if let Message::ClientCreated { client: cl, csrf } = create_client(ck).await {
+        let mut v: Vec<(usize, u8)> = Vec::new();
+        // true => like; false => reply
+        let mut like_or_reply = true;
+
+        let mut queryid = None;
+        let mut last_liketime = None;
+        let mut last_replytime = None;
+        loop {
+            let json: serde_json::Value;
+            let notifys: &serde_json::Value;
+            if queryid.is_none() && last_liketime.is_none() {
+                // 第一次请求
+                let first = cl
+                .get(
+                    Url::parse(if like_or_reply {
+                        "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
+                    } else {
+                        "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
+                    })
+                    .unwrap(),
+                )
+                .send()
+                .await
+                .expect("Can't get first request");
+                json = serde_json::from_str(&first.text().await.unwrap()).unwrap();
+                if like_or_reply {
+                    notifys = &json["data"]["total"]["items"];
+                    last_liketime =
+                        notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
+                    queryid = json["data"]["total"]["cursor"]["id"].as_u64();
+                } else {
+                    notifys = &json["data"]["items"];
+                    last_replytime =
+                        notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
+                    queryid = json["data"]["cursor"]["id"].as_u64();
+                }
+            } else {
+                let mut url = Url::parse(if like_or_reply {
+                    "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
+                } else {
+                    "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
+                })
+                .unwrap();
+                if like_or_reply {
+                    url.query_pairs_mut()
+                        .append_pair("id", &queryid.unwrap().to_string())
+                        .append_pair("like_time", &last_liketime.unwrap().to_string());
+                    let other = cl.get(url).send().await.expect("Can't get first request");
+                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    notifys = &json["data"]["total"]["items"];
+                    last_liketime =
+                        notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
+                    queryid = json["data"]["total"]["cursor"]["id"].as_u64();
+                } else {
+                    url.query_pairs_mut()
+                        .append_pair("id", &queryid.unwrap().to_string())
+                        .append_pair("reply_time", &last_replytime.unwrap().to_string());
+                    let other = cl.get(url).send().await.expect("Can't get first request");
+                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    notifys = &json["data"]["items"];
+                    last_replytime =
+                        notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
+                    queryid = json["data"]["cursor"]["id"].as_u64();
+                }
+            }
+            dbg!(queryid, last_liketime);
+            for i in notifys.as_array().unwrap() {
+                let notify_id = i["id"].as_u64().unwrap() as usize;
+                v.push((notify_id, if like_or_reply { 0 } else { 1 }));
+                info!("Fetched notify {notify_id}");
+            }
+            //push完检测是否为end
+            if like_or_reply {
+                if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() {
+                    like_or_reply = false;
+                    last_liketime = None;
+                    queryid = None;
+                    info!("收到赞的评论处理完毕。");
+                }
+            } else if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
+                info!("收到评论的评论处理完毕。");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        info!("当前待处理通知数量: {}", v.len());
+        let cl = Arc::new(cl);
+        for i in v {
+            remove_notify(Arc::clone(&cl), i.0, csrf.clone(), i.1.to_string()).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+        std::process::exit(0);
     }
 }
