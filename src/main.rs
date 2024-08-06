@@ -19,6 +19,7 @@ static TAFFY: &[u8] = include_bytes!("assets/taffy.png");
 
 fn main() -> iced::Result {
     tracing_subscriber::fmt::init();
+
     {
         let args: Vec<String> = std::env::args().collect();
         if args.len() == 3 {
@@ -29,8 +30,8 @@ fn main() -> iced::Result {
             }
         }
     }
-    let icon = iced::window::icon::from_file_data(TAFFY, None).unwrap();
 
+    let icon = iced::window::icon::from_file_data(TAFFY, None).unwrap();
     iced::application("BilibiliCommentCleaning", Main::update, Main::view)
         .window(iced::window::Settings {
             icon: Some(icon),
@@ -283,88 +284,124 @@ async fn create_client(ck: String) -> Message {
     }
 }
 
+enum MsgType {
+    Like,
+    Reply,
+    At,
+}
+
 async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
     let mut v: Vec<Comment> = Vec::new();
     let oid_regex = Regex::new(r"bilibili://video/(\d+)").unwrap();
-    // true => like; false => reply
-    let mut like_or_reply = true;
-
+    let mut msgtype = MsgType::Like;
     let mut queryid = None;
-    let mut last_liketime = None;
-    let mut last_replytime = None;
+    let mut last_time = None;
     loop {
         let json: serde_json::Value;
         let notifys: &serde_json::Value;
-        if queryid.is_none() && last_liketime.is_none() {
+        if queryid.is_none() && last_time.is_none() {
             // 第一次请求
             let first = cl
                 .get(
-                    Url::parse(if like_or_reply {
-                        "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
-                    } else {
-                        "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
-                    })
+                    Url::parse(
+                        match msgtype {
+                            MsgType::Like=>"https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
+                            MsgType::Reply=>"https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web",
+                            MsgType::At=>"https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web"
+                        }
+                    )
                     .unwrap(),
                 )
                 .send()
                 .await
                 .expect("Can't get first request");
             json = serde_json::from_str(&first.text().await.unwrap()).unwrap();
-            if like_or_reply {
-                notifys = &json["data"]["total"]["items"];
-                last_liketime = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
-                queryid = json["data"]["total"]["cursor"]["id"].as_u64();
-            } else {
-                notifys = &json["data"]["items"];
-                last_replytime = notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
-                queryid = json["data"]["cursor"]["id"].as_u64();
+            match msgtype {
+                MsgType::Like => {
+                    notifys = &json["data"]["total"]["items"];
+                    if notifys.as_array().unwrap().is_empty() {
+                        msgtype = MsgType::Reply;
+                        info!("没有收到赞的评论。");
+                        continue;
+                    }
+                    last_time = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
+                    queryid = json["data"]["total"]["cursor"]["id"].as_u64();
+                }
+                MsgType::Reply => {
+                    notifys = &json["data"]["items"];
+                    if notifys.as_array().unwrap().is_empty() {
+                        msgtype = MsgType::At;
+                        info!("没有收到评论的评论。");
+                        continue;
+                    }
+                    last_time = notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
+                    queryid = json["data"]["cursor"]["id"].as_u64();
+                }
+                MsgType::At => {
+                    notifys = &json["data"]["items"];
+                    if notifys.as_array().unwrap().is_empty() {
+                        info!("没有被At的评论。");
+                        break;
+                    }
+                    last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
+                    queryid = json["data"]["cursor"]["id"].as_u64();
+                }
             }
         } else {
-            let mut url = Url::parse(if like_or_reply {
-                "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
-            } else {
-                "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
+            let mut url = Url::parse(match msgtype {
+                MsgType::Like => {
+                    "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
+                }
+                MsgType::Reply => {
+                    "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
+                }
+                MsgType::At => "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
             })
             .unwrap();
-            if like_or_reply {
-                url.query_pairs_mut()
-                    .append_pair("id", &queryid.unwrap().to_string())
-                    .append_pair("like_time", &last_liketime.unwrap().to_string());
-                let other = cl.get(url).send().await.expect("Can't get first request");
-                json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
-                notifys = &json["data"]["total"]["items"];
-                last_liketime = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
-                queryid = json["data"]["total"]["cursor"]["id"].as_u64();
-            } else {
-                url.query_pairs_mut()
-                    .append_pair("id", &queryid.unwrap().to_string())
-                    .append_pair("reply_time", &last_replytime.unwrap().to_string());
-                let other = cl.get(url).send().await.expect("Can't get first request");
-                json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
-                notifys = &json["data"]["items"];
-                last_replytime = notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
-                queryid = json["data"]["cursor"]["id"].as_u64();
+            match msgtype {
+                MsgType::Like => {
+                    url.query_pairs_mut()
+                        .append_pair("id", &queryid.unwrap().to_string())
+                        .append_pair("like_time", &last_time.unwrap().to_string());
+                    let other = cl.get(url).send().await.expect("Can't get first request");
+                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    notifys = &json["data"]["total"]["items"];
+                    last_time = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
+                    queryid = json["data"]["total"]["cursor"]["id"].as_u64();
+                }
+                MsgType::Reply => {
+                    url.query_pairs_mut()
+                        .append_pair("id", &queryid.unwrap().to_string())
+                        .append_pair("reply_time", &last_time.unwrap().to_string());
+                    let other = cl.get(url).send().await.expect("Can't get first request");
+                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    notifys = &json["data"]["items"];
+                    last_time = notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
+                    queryid = json["data"]["cursor"]["id"].as_u64();
+                }
+                MsgType::At => {
+                    url.query_pairs_mut()
+                        .append_pair("id", &queryid.unwrap().to_string())
+                        .append_pair("at_time", &last_time.unwrap().to_string());
+                    let other = cl.get(url).send().await.expect("Can't get first request");
+                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    notifys = &json["data"]["items"];
+                    last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
+                    queryid = json["data"]["cursor"]["id"].as_u64();
+                }
             }
         }
-        dbg!(queryid, last_liketime);
+        dbg!(queryid, last_time);
         let mut r#type: usize;
         'outer: for i in notifys.as_array().unwrap() {
             if i["item"]["type"] == "reply" {
-                // dbg!(&i["item"]);
-                // dbg!(
-                //     if like_or_reply {
-                //         last_liketime
-                //     } else {
-                //         last_replytime
-                //     },
-                //     queryid
-                // );
-                let rpid = if like_or_reply {
+                let rpid = if let MsgType::Like = msgtype {
                     i["item"]["item_id"].as_u64().unwrap() as usize
                 } else {
                     i["item"]["target_id"].as_u64().unwrap() as usize
                 };
-                if !like_or_reply {
+                if let MsgType::Like = msgtype {
+                } else {
                     for i in &v {
                         if i.rpid == rpid {
                             info!("Duplicate Comment: {rpid}");
@@ -421,17 +458,21 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                 } else {
                     panic!("Undefined URI:{}\nCan't get oid", uri);
                 }
-                let content = if like_or_reply {
-                    i["item"]["title"].as_str().unwrap().to_string()
-                } else {
-                    let v = i["item"]["target_reply_content"]
-                        .as_str()
-                        .unwrap()
-                        .to_string();
-                    if v.is_empty() {
-                        i["item"]["title"].as_str().unwrap().to_string()
-                    } else {
-                        v
+                let content = match msgtype {
+                    MsgType::Like => i["item"]["title"].as_str().unwrap().to_string(),
+                    MsgType::Reply => {
+                        let v = i["item"]["target_reply_content"]
+                            .as_str()
+                            .unwrap()
+                            .to_string();
+                        if v.is_empty() {
+                            i["item"]["title"].as_str().unwrap().to_string()
+                        } else {
+                            v
+                        }
+                    }
+                    MsgType::At => {
+                        format!("{}\n({})", i["item"]["source_content"], i["item"]["title"])
                     }
                 };
                 let notify_id = i["id"].as_u64().unwrap() as usize;
@@ -442,23 +483,39 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     content: content.clone(),
                     remove_state: true,
                     notify_id,
-                    tp: if like_or_reply { 0 } else { 1 },
+                    tp: match msgtype {
+                        MsgType::Like => 0,
+                        MsgType::Reply => 1,
+                        MsgType::At => 2,
+                    },
                 });
                 info!("Push Comment: {rpid}");
                 info!("Vec Counts:{}", v.len());
             }
         }
         // push完检测是否为end
-        if like_or_reply {
-            if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() {
-                like_or_reply = false;
-                last_liketime = None;
-                queryid = None;
-                info!("收到赞的评论处理完毕。");
+        match msgtype {
+            MsgType::Like => {
+                if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() {
+                    msgtype = MsgType::Reply;
+                    last_time = None;
+                    queryid = None;
+                    info!("收到赞的评论处理完毕。");
+                }
             }
-        } else if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
-            info!("收到评论的评论处理完毕。");
-            break;
+            MsgType::Reply => {
+                if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
+                    msgtype = MsgType::At;
+                    info!("收到评论的评论处理完毕。");
+                    continue;
+                }
+            }
+            MsgType::At => {
+                if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
+                    info!("被At的评论处理完毕。");
+                    break;
+                }
+            }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -539,87 +596,144 @@ https://api.bilibili.com/x/msgfeed/del",
 async fn fetch_remove_notifys(ck: String) {
     if let Message::ClientCreated { client: cl, csrf } = create_client(ck).await {
         let mut v: Vec<(usize, u8)> = Vec::new();
-        // true => like; false => reply
-        let mut like_or_reply = true;
-
+        let mut msgtype = MsgType::Like;
         let mut queryid = None;
-        let mut last_liketime = None;
-        let mut last_replytime = None;
+        let mut last_time = None;
         loop {
             let json: serde_json::Value;
             let notifys: &serde_json::Value;
-            if queryid.is_none() && last_liketime.is_none() {
+            if queryid.is_none() && last_time.is_none() {
                 // 第一次请求
                 let first = cl
-                .get(
-                    Url::parse(if like_or_reply {
-                        "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
-                    } else {
-                        "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
-                    })
-                    .unwrap(),
-                )
-                .send()
-                .await
-                .expect("Can't get first request");
+                    .get(
+                        Url::parse(
+                            match msgtype {
+                                MsgType::Like=>"https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
+                                MsgType::Reply=>"https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web",
+                                MsgType::At=>"https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web"
+                            }
+                        )
+                        .unwrap(),
+                    )
+                    .send()
+                    .await
+                    .expect("Can't get first request");
                 json = serde_json::from_str(&first.text().await.unwrap()).unwrap();
-                if like_or_reply {
-                    notifys = &json["data"]["total"]["items"];
-                    last_liketime =
-                        notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
-                    queryid = json["data"]["total"]["cursor"]["id"].as_u64();
-                } else {
-                    notifys = &json["data"]["items"];
-                    last_replytime =
-                        notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
-                    queryid = json["data"]["cursor"]["id"].as_u64();
+                match msgtype {
+                    MsgType::Like => {
+                        notifys = &json["data"]["total"]["items"];
+                        if notifys.as_array().unwrap().is_empty() {
+                            msgtype = MsgType::Reply;
+                            info!("没有收到赞的评论。");
+                            continue;
+                        }
+                        last_time =
+                            notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
+                        queryid = json["data"]["total"]["cursor"]["id"].as_u64();
+                    }
+                    MsgType::Reply => {
+                        notifys = &json["data"]["items"];
+                        if notifys.as_array().unwrap().is_empty() {
+                            msgtype = MsgType::At;
+                            info!("没有收到评论的评论。");
+                            continue;
+                        }
+                        last_time =
+                            notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
+                        queryid = json["data"]["cursor"]["id"].as_u64();
+                    }
+                    MsgType::At => {
+                        notifys = &json["data"]["items"];
+                        if notifys.as_array().unwrap().is_empty() {
+                            info!("没有被At的评论。");
+                            break;
+                        }
+                        last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
+                        queryid = json["data"]["cursor"]["id"].as_u64();
+                    }
                 }
             } else {
-                let mut url = Url::parse(if like_or_reply {
-                    "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
-                } else {
-                    "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
+                let mut url = Url::parse(match msgtype {
+                    MsgType::Like => {
+                        "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
+                    }
+                    MsgType::Reply => {
+                        "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
+                    }
+                    MsgType::At => "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
                 })
                 .unwrap();
-                if like_or_reply {
-                    url.query_pairs_mut()
-                        .append_pair("id", &queryid.unwrap().to_string())
-                        .append_pair("like_time", &last_liketime.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get first request");
-                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
-                    notifys = &json["data"]["total"]["items"];
-                    last_liketime =
-                        notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
-                    queryid = json["data"]["total"]["cursor"]["id"].as_u64();
-                } else {
-                    url.query_pairs_mut()
-                        .append_pair("id", &queryid.unwrap().to_string())
-                        .append_pair("reply_time", &last_replytime.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get first request");
-                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
-                    notifys = &json["data"]["items"];
-                    last_replytime =
-                        notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
-                    queryid = json["data"]["cursor"]["id"].as_u64();
+                match msgtype {
+                    MsgType::Like => {
+                        url.query_pairs_mut()
+                            .append_pair("id", &queryid.unwrap().to_string())
+                            .append_pair("like_time", &last_time.unwrap().to_string());
+                        let other = cl.get(url).send().await.expect("Can't get first request");
+                        json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                        notifys = &json["data"]["total"]["items"];
+                        last_time =
+                            notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
+                        queryid = json["data"]["total"]["cursor"]["id"].as_u64();
+                    }
+                    MsgType::Reply => {
+                        url.query_pairs_mut()
+                            .append_pair("id", &queryid.unwrap().to_string())
+                            .append_pair("reply_time", &last_time.unwrap().to_string());
+                        let other = cl.get(url).send().await.expect("Can't get first request");
+                        json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                        notifys = &json["data"]["items"];
+                        last_time =
+                            notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
+                        queryid = json["data"]["cursor"]["id"].as_u64();
+                    }
+                    MsgType::At => {
+                        url.query_pairs_mut()
+                            .append_pair("id", &queryid.unwrap().to_string())
+                            .append_pair("at_time", &last_time.unwrap().to_string());
+                        let other = cl.get(url).send().await.expect("Can't get first request");
+                        json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                        notifys = &json["data"]["items"];
+                        last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
+                        queryid = json["data"]["cursor"]["id"].as_u64();
+                    }
                 }
             }
-            dbg!(queryid, last_liketime);
+            dbg!(queryid, last_time);
             for i in notifys.as_array().unwrap() {
                 let notify_id = i["id"].as_u64().unwrap() as usize;
-                v.push((notify_id, if like_or_reply { 0 } else { 1 }));
+                v.push((
+                    notify_id,
+                    match msgtype {
+                        MsgType::Like => 0,
+                        MsgType::Reply => 1,
+                        MsgType::At => 2,
+                    },
+                ));
                 info!("Fetched notify {notify_id}");
             }
             //push完检测是否为end
-            if like_or_reply {
-                if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() {
-                    like_or_reply = false;
-                    last_liketime = None;
-                    queryid = None;
-                    info!("收到赞的评论处理完毕。");
+            match msgtype {
+                MsgType::Like => {
+                    if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() {
+                        msgtype = MsgType::Reply;
+                        last_time = None;
+                        queryid = None;
+                        info!("收到赞的评论处理完毕。");
+                    }
                 }
-            } else if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
-                info!("收到评论的评论处理完毕。");
-                break;
+                MsgType::Reply => {
+                    if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
+                        msgtype = MsgType::At;
+                        info!("收到评论的评论处理完毕。");
+                        continue;
+                    }
+                }
+                MsgType::At => {
+                    if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
+                        info!("被At的评论处理完毕。");
+                        break;
+                    }
+                }
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
