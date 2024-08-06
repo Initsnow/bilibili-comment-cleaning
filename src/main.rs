@@ -363,7 +363,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     url.query_pairs_mut()
                         .append_pair("id", &queryid.unwrap().to_string())
                         .append_pair("like_time", &last_time.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get first request");
+                    let other = cl.get(url).send().await.expect("Can't get request");
                     json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
                     notifys = &json["data"]["total"]["items"];
                     last_time = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
@@ -373,7 +373,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     url.query_pairs_mut()
                         .append_pair("id", &queryid.unwrap().to_string())
                         .append_pair("reply_time", &last_time.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get first request");
+                    let other = cl.get(url).send().await.expect("Can't get request");
                     json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
                     notifys = &json["data"]["items"];
                     last_time = notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
@@ -383,7 +383,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     url.query_pairs_mut()
                         .append_pair("id", &queryid.unwrap().to_string())
                         .append_pair("at_time", &last_time.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get first request");
+                    let other = cl.get(url).send().await.expect("Can't get request");
                     json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
                     notifys = &json["data"]["items"];
                     last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
@@ -668,7 +668,7 @@ async fn fetch_remove_notifys(ck: String) {
                         url.query_pairs_mut()
                             .append_pair("id", &queryid.unwrap().to_string())
                             .append_pair("like_time", &last_time.unwrap().to_string());
-                        let other = cl.get(url).send().await.expect("Can't get first request");
+                        let other = cl.get(url).send().await.expect("Can't get request");
                         json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
                         notifys = &json["data"]["total"]["items"];
                         last_time =
@@ -679,7 +679,7 @@ async fn fetch_remove_notifys(ck: String) {
                         url.query_pairs_mut()
                             .append_pair("id", &queryid.unwrap().to_string())
                             .append_pair("reply_time", &last_time.unwrap().to_string());
-                        let other = cl.get(url).send().await.expect("Can't get first request");
+                        let other = cl.get(url).send().await.expect("Can't get request");
                         json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
                         notifys = &json["data"]["items"];
                         last_time =
@@ -690,7 +690,7 @@ async fn fetch_remove_notifys(ck: String) {
                         url.query_pairs_mut()
                             .append_pair("id", &queryid.unwrap().to_string())
                             .append_pair("at_time", &last_time.unwrap().to_string());
-                        let other = cl.get(url).send().await.expect("Can't get first request");
+                        let other = cl.get(url).send().await.expect("Can't get request");
                         json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
                         notifys = &json["data"]["items"];
                         last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
