@@ -110,12 +110,9 @@ impl Main {
             }
 
             State::InitCompleted => {
-                match msg {
-                    Message::CommentsFetched(comments) => {
-                        self.comments = Some(comments);
-                        self.state = State::CommentsFetched;
-                    }
-                    _ => {}
+                if let Message::CommentsFetched(comments) = msg {
+                    self.comments = Some(comments);
+                    self.state = State::CommentsFetched;
                 }
                 Task::none()
             }
@@ -506,6 +503,8 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
             MsgType::Reply => {
                 if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
                     msgtype = MsgType::At;
+                    last_time = None;
+                    queryid = None;
                     info!("收到评论的评论处理完毕。");
                     continue;
                 }
@@ -724,6 +723,8 @@ async fn fetch_remove_notifys(ck: String) {
                 MsgType::Reply => {
                     if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
                         msgtype = MsgType::At;
+                        last_time = None;
+                        queryid = None;
                         info!("收到评论的评论处理完毕。");
                         continue;
                     }
