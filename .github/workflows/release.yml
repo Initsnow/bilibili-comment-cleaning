@@ -44,7 +44,6 @@ jobs:
           ls target/${{ matrix.target }}/release
           ls
           ls ../
-          ls -
       - name: Package as archive
         shell: bash
         run: |
