@@ -57,7 +57,7 @@ jobs:
       - name: Publish release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bilibili-comment-cleaning-${{ matrix.platform.os_name }}
+          name: bilibili-comment-cleaning-${{ matrix.platform.target }}
           path: "bilibili-comment-cleaning-*"
       - name: Generate SHA-256
         run: shasum -a 256 ${{ matrix.platform.name }}
