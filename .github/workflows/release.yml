@@ -66,4 +66,4 @@ jobs:
         with:
           draft: true
           files: "bilibili-comment-cleaning-*"
-          body_path: Changes.md
+          # body_path: Changes.md
