@@ -2,20 +2,68 @@ on:
   release:
     types: [created]
 
+env:
+  CRATE_NAME: bilibili-comment-cleaning
+  GITHUB_TOKEN: ${{ github.token }}
+  RUST_BACKTRACE: 1
+
 jobs:
   release:
-    name: release ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    name: Release - ${{ matrix.platform.release_for }}
     strategy:
-      fail-fast: false
       matrix:
-        target: [x86_64-pc-windows-gnu, x86_64-unknown-linux-musl]
+        platform:
+          - release_for: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: bilibili-comment-cleaning
+            name: bilibili-comment-cleaning-Linux-x86_64-gnu.tar.gz
+            command: build
+
+          - release_for: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: bilibili-comment-cleaning.exe
+            name: bilibili-comment-cleaning-Windows-x86_64.zip
+            command: both
+
+    runs-on: ${{ matrix.platform.os }}
     steps:
-      - uses: actions/checkout@master
-      - name: Compile and release
-        uses: rust-build/rust-build.action@v1.4.5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@master
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v0
         with:
-          RUSTTARGET: ${{ matrix.target }}
-          EXTRA_FILES: "README.md LICENSE"
+          command: ${{ matrix.platform.command }}
+          target: ${{ matrix.platform.target }}
+          args: "--release"
+          strip: true
+      - name: Debug
+        shell: bash
+        run: |
+          ls target/${{ matrix.target }}/release
+          ls
+          ls ../
+      - name: Package as archive
+        shell: bash
+        run: |
+          cd target/${{ matrix.platform.target }}/release
+          if [[ "${{ matrix.platform.os }}" == "windows-latest" ]]; then
+            7z a ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
+          else
+            tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
+          fi
+          cd -
+      - name: Publish release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bilibili-comment-cleaning-${{ matrix.platform.target }}
+          path: "bilibili-comment-cleaning-*"
+      - name: Generate SHA-256
+        run: shasum -a 256 ${{ matrix.platform.name }}
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          files: "bilibili-comment-cleaning-*"
+          # body_path: Changes.md
