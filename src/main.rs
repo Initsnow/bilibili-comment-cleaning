@@ -128,14 +128,14 @@ impl Main {
                     Message::CommentsSelectAll => {
                         for i in self.comments.as_mut().unwrap() {
                             i.remove_state = true;
-                            self.select_state = true;
                         }
+                        self.select_state = false;
                     }
                     Message::CommentsDeselectAll => {
                         for i in self.comments.as_mut().unwrap() {
                             i.remove_state = false;
-                            self.select_state = false;
                         }
+                        self.select_state = true;
                     }
                     Message::DeleteComment => {
                         for i in self.comments.as_ref().unwrap() {
