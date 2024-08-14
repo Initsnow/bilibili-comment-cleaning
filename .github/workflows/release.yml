@@ -30,7 +30,7 @@ jobs:
     runs-on: ${{ matrix.platform.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@master
       - name: Build binary
         uses: houseabsolute/actions-rust-cross@v0
         with:
@@ -54,27 +54,16 @@ jobs:
             tar czvf ../../../${{ matrix.platform.name }} ${{ matrix.platform.bin }}
           fi
           cd -
-          if: |
-            matrix.toolchain == 'stable' &&
-            ( startsWith( github.ref, 'refs/tags/v' ) ||
-              github.ref == 'refs/tags/test-release' )
       - name: Publish release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: bilibili-comment-cleaning-${{ matrix.platform.os_name }}
           path: "bilibili-comment-cleaning-*"
-        if: matrix.toolchain == 'stable' && github.ref == 'refs/tags/test-release'
       - name: Generate SHA-256
         run: shasum -a 256 ${{ matrix.platform.name }}
-        if: |
-          matrix.toolchain == 'stable' &&
-          matrix.platform.os == 'macOS-latest' &&
-          ( startsWith( github.ref, 'refs/tags/v' ) ||
-          github.ref == 'refs/tags/test-release' )
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: "bilibili-comment-cleaning-*"
           body_path: Changes.md
-        if: matrix.toolchain == 'stable' && startsWith( github.ref, 'refs/tags/v' )
