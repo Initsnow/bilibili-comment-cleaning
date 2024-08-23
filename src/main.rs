@@ -415,10 +415,9 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                         .parse::<usize>()
                         .unwrap();
                     let business_id = i["item"]["business_id"].as_u64();
-                    r#type = if let Some(v) = business_id {
-                        v as usize
-                    } else {
-                        17
+                    r#type = match business_id {
+                        Some(v) if v != 0 => v as usize,
+                        _ => 17,
                     };
                 } else if uri.contains("https://h.bilibili.com/ywh/") {
                     // 带图动态内评论
@@ -623,7 +622,7 @@ async fn fetch_remove_notifys(ck: String) {
                         notifys = &json["data"]["total"]["items"];
                         if notifys.as_array().unwrap().is_empty() {
                             msgtype = MsgType::Reply;
-                            info!("没有收到赞的评论。");
+                            info!("没有收到赞的通知。");
                             continue;
                         }
                         last_time =
@@ -634,7 +633,7 @@ async fn fetch_remove_notifys(ck: String) {
                         notifys = &json["data"]["items"];
                         if notifys.as_array().unwrap().is_empty() {
                             msgtype = MsgType::At;
-                            info!("没有收到评论的评论。");
+                            info!("没有收到评论的通知。");
                             continue;
                         }
                         last_time =
@@ -644,7 +643,7 @@ async fn fetch_remove_notifys(ck: String) {
                     MsgType::At => {
                         notifys = &json["data"]["items"];
                         if notifys.as_array().unwrap().is_empty() {
-                            info!("没有被At的评论。");
+                            info!("没有被At的通知。");
                             break;
                         }
                         last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
@@ -717,7 +716,7 @@ async fn fetch_remove_notifys(ck: String) {
                         msgtype = MsgType::Reply;
                         last_time = None;
                         queryid = None;
-                        info!("收到赞的评论处理完毕。");
+                        info!("收到赞的通知处理完毕。");
                     }
                 }
                 MsgType::Reply => {
@@ -725,13 +724,13 @@ async fn fetch_remove_notifys(ck: String) {
                         msgtype = MsgType::At;
                         last_time = None;
                         queryid = None;
-                        info!("收到评论的评论处理完毕。");
+                        info!("收到评论的通知处理完毕。");
                         continue;
                     }
                 }
                 MsgType::At => {
                     if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
-                        info!("被At的评论处理完毕。");
+                        info!("被At的通知处理完毕。");
                         break;
                     }
                 }
