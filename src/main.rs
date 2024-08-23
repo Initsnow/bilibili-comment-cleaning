@@ -1,4 +1,5 @@
 use iced::stream;
+use iced::widget::toggler;
 use iced::{
     futures::SinkExt,
     widget::{
@@ -6,9 +7,12 @@ use iced::{
     },
     Alignment, Element, Length, Subscription, Task,
 };
+use indicatif::ProgressBar;
 use regex::Regex;
 use reqwest::Client;
 use reqwest::{header, Url};
+use serde_json::Value;
+use std::collections::HashSet;
 use std::{sync::Arc, time::Duration};
 use tokio::spawn;
 use tokio::sync::mpsc::{self, Sender};
@@ -50,6 +54,7 @@ struct Main {
     state: State,
     comments: Option<Vec<Comment>>,
     select_state: bool,
+    aicu_state: bool,
     sender: Option<Sender<(Arc<Client>, String, Comment)>>,
 }
 
@@ -67,13 +72,14 @@ enum Message {
     CookieInputChanged(String),
     ClientCreated { client: Client, csrf: String },
     CommentsFetched(Vec<Comment>),
-    ChangeCommentRemoveState(usize, bool),
+    ChangeCommentRemoveState(u64, bool),
     CommentsSelectAll,
     CommentsDeselectAll,
     DeleteComment,
-    CommentDeleted { rpid: usize },
+    CommentDeleted { rpid: u64 },
     CommentDeleteError(i64),
     ChannelConnected(Sender<(Arc<Client>, String, Comment)>),
+    AicuToggle(bool),
 }
 
 impl Main {
@@ -96,6 +102,12 @@ impl Main {
                         self.client = Arc::new(client);
                         self.csrf = csrf;
                         self.state = State::InitCompleted;
+                        if self.aicu_state {
+                            return Task::perform(
+                                fetch_comment_both(Arc::clone(&self.client)),
+                                Message::CommentsFetched,
+                            );
+                        }
                         return Task::perform(
                             fetch_comment(Arc::clone(&self.client)),
                             Message::CommentsFetched,
@@ -103,6 +115,9 @@ impl Main {
                     }
                     Message::ChannelConnected(s) => {
                         self.sender = Some(s);
+                    }
+                    Message::AicuToggle(b) => {
+                        self.aicu_state = b;
                     }
                     _ => {}
                 }
@@ -187,11 +202,19 @@ impl Main {
     fn view(&self) -> Element<Message> {
         match self.state {
             State::WaitingForCookie => center(
-                row![
-                    text_input("Input cookie here", &self.cookie)
-                        .on_input(Message::CookieInputChanged)
-                        .on_submit(Message::CookieSubmited(self.cookie.to_owned())),
-                    button("enter").on_press(Message::CookieSubmited(self.cookie.to_owned())),
+                column![
+                    row![
+                        text_input("Input cookie here", &self.cookie)
+                            .on_input(Message::CookieInputChanged)
+                            .on_submit(Message::CookieSubmited(self.cookie.to_owned())),
+                        button("enter").on_press(Message::CookieSubmited(self.cookie.to_owned())),
+                    ]
+                    .spacing(5),
+                    toggler(
+                        Some("Also fetch comments from aicu.cc".into()),
+                        self.aicu_state,
+                        Message::AicuToggle
+                    )
                 ]
                 .spacing(5),
             )
@@ -250,14 +273,14 @@ impl Main {
 #[derive(Debug, Default, Clone)]
 
 struct Comment {
-    oid: usize,
-    r#type: usize,
-    rpid: usize,
+    oid: u64,
+    r#type: u8,
+    rpid: u64,
     content: String,
     remove_state: bool,
-    notify_id: usize,
-    /// 0为收到赞的评论 1为收到评论的评论
-    tp: u8,
+    notify_id: Option<u64>,
+    /// 删除通知用 0为收到赞的 1为收到评论的 2为被At的
+    tp: Option<u8>,
 }
 async fn create_client(ck: String) -> Message {
     let a = ck
@@ -293,6 +316,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
     let mut msgtype = MsgType::Like;
     let mut queryid = None;
     let mut last_time = None;
+    let pb = ProgressBar::new_spinner();
     loop {
         let json: serde_json::Value;
         let notifys: &serde_json::Value;
@@ -313,6 +337,9 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                 .await
                 .expect("Can't get first request");
             json = serde_json::from_str(&first.text().await.unwrap()).unwrap();
+            if json["code"] != 0 {
+                panic!("Can't get first request, Json response: {}", json);
+            }
             match msgtype {
                 MsgType::Like => {
                     notifys = &json["data"]["total"]["items"];
@@ -388,14 +415,14 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                 }
             }
         }
-        dbg!(queryid, last_time);
-        let mut r#type: usize;
+        // dbg!(queryid, last_time);
+        let mut r#type: u8;
         'outer: for i in notifys.as_array().unwrap() {
             if i["item"]["type"] == "reply" {
                 let rpid = if let MsgType::Like = msgtype {
-                    i["item"]["item_id"].as_u64().unwrap() as usize
+                    i["item"]["item_id"].as_u64().unwrap()
                 } else {
-                    i["item"]["target_id"].as_u64().unwrap() as usize
+                    i["item"]["target_id"].as_u64().unwrap()
                 };
                 if let MsgType::Like = msgtype {
                 } else {
@@ -412,25 +439,25 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     // 动态内评论
                     oid = uri
                         .replace("https://t.bilibili.com/", "")
-                        .parse::<usize>()
+                        .parse::<u64>()
                         .unwrap();
                     let business_id = i["item"]["business_id"].as_u64();
                     r#type = match business_id {
-                        Some(v) if v != 0 => v as usize,
+                        Some(v) if v != 0 => v as u8,
                         _ => 17,
                     };
                 } else if uri.contains("https://h.bilibili.com/ywh/") {
                     // 带图动态内评论
                     oid = uri
                         .replace("https://h.bilibili.com/ywh/", "")
-                        .parse::<usize>()
+                        .parse::<u64>()
                         .unwrap();
                     r#type = 11;
                 } else if uri.contains("https://www.bilibili.com/read/cv") {
                     // 专栏内评论
                     oid = uri
                         .replace("https://www.bilibili.com/read/cv", "")
-                        .parse::<usize>()
+                        .parse::<u64>()
                         .unwrap();
                     r#type = 12;
                 } else if uri.contains("https://www.bilibili.com/video/") {
@@ -441,12 +468,12 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                         .get(1)
                         .unwrap()
                         .as_str()
-                        .parse::<usize>()
+                        .parse::<u64>()
                         .unwrap();
                     r#type = 1;
                 } else if uri.contains("https://www.bilibili.com/bangumi/play/") {
                     // 电影（番剧？）内评论
-                    oid = i["item"]["subject_id"].as_u64().unwrap() as usize;
+                    oid = i["item"]["subject_id"].as_u64().unwrap();
                     r#type = 1;
                 } else if uri.is_empty() {
                     info!("No URI, Skiped");
@@ -471,22 +498,28 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                         format!("{}\n({})", i["item"]["source_content"], i["item"]["title"])
                     }
                 };
-                let notify_id = i["id"].as_u64().unwrap() as usize;
+                let notify_id = i["id"].as_u64().unwrap();
                 v.push(Comment {
                     oid,
                     r#type,
                     rpid,
                     content: content.clone(),
                     remove_state: true,
-                    notify_id,
+                    notify_id: Some(notify_id),
                     tp: match msgtype {
-                        MsgType::Like => 0,
-                        MsgType::Reply => 1,
-                        MsgType::At => 2,
+                        MsgType::Like => Some(0),
+                        MsgType::Reply => Some(1),
+                        MsgType::At => Some(2),
                     },
                 });
-                info!("Push Comment: {rpid}");
-                info!("Vec Counts:{}", v.len());
+                pb.inc(1);
+                pb.set_message(format!(
+                    "Push Comment: {}, Vec counts now: {}",
+                    rpid,
+                    v.len()
+                ));
+                // info!("Push Comment: {rpid}");
+                // info!("Vec Counts:{}", v.len());
             }
         }
         // push完检测是否为end
@@ -511,6 +544,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
             MsgType::At => {
                 if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
                     info!("被At的评论处理完毕。");
+                    pb.finish_with_message("done");
                     break;
                 }
             }
@@ -554,8 +588,11 @@ async fn remove_comment(cl: Arc<Client>, csrf: String, i: Comment) -> Message {
     };
     let json_res: serde_json::Value = serde_json::from_str(res.as_str()).unwrap();
     if json_res["code"].as_i64().unwrap() == 0 {
-        info!("remove reply {} success", i.rpid);
-        remove_notify(cl, i.notify_id, csrf, i.tp.to_string()).await;
+        info!("Remove reply {} successful", i.rpid);
+        // 如果is_some则删除通知
+        if let Some(notify_id) = i.notify_id {
+            remove_notify(cl, notify_id, csrf, i.tp.unwrap().to_string()).await;
+        }
         Message::CommentDeleted { rpid: i.rpid }
     } else {
         error!("Can't remove comment. Response json: {}", json_res);
@@ -563,7 +600,97 @@ async fn remove_comment(cl: Arc<Client>, csrf: String, i: Comment) -> Message {
     }
 }
 
-async fn remove_notify(cl: Arc<Client>, id: usize, csrf: String, tp: String) {
+async fn get_uid(cl: Arc<Client>) -> u64 {
+    let res = cl
+        .get("https://api.bilibili.com/x/member/web/account")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let json_res: serde_json::Value = serde_json::from_str(res.as_str()).unwrap();
+    json_res["data"]["mid"]
+        .as_u64()
+        .expect("Can't get uid. Please check your cookie data")
+}
+async fn fetch_comment_from_aicu(cl: Arc<Client>) -> Vec<Comment> {
+    let uid = get_uid(Arc::clone(&cl)).await;
+    let mut page = 1;
+    let mut v = Vec::new();
+
+    // get counts & init progress bar
+    let total_replies = serde_json::from_str::<Value>(
+        cl.get(format!(
+            "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn=1&ps=0&mode=0&keyword=",
+            uid
+        ))
+        .send()
+        .await
+        .expect("Can't get total_replies")
+        .text()
+        .await
+        .unwrap()
+        .as_str(),
+    )
+    .unwrap()["data"]["cursor"]["all_count"]
+        .as_u64()
+        .unwrap();
+    let pb = ProgressBar::new(total_replies);
+    println!("正在从aicu.cc获取数据...");
+    loop {
+        let res = serde_json::from_str::<Value>(
+            cl.get(format!(
+                "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn={}&ps=500&mode=0&keyword=",
+                uid, page
+            ))
+            .send()
+            .await
+            .expect("Can't get first request")
+            .text()
+            .await
+            .unwrap()
+            .as_str(),
+        )
+        .unwrap();
+        let replies = &res["data"]["replies"];
+        for i in replies.as_array().unwrap() {
+            let rpid = i["rpid"].as_str().unwrap().parse().unwrap();
+            v.push(Comment {
+                oid: i["dyn"]["oid"].as_str().unwrap().parse().unwrap(),
+                r#type: i["dyn"]["type"].as_u64().unwrap() as u8,
+                rpid,
+                content: i["message"].as_str().unwrap().to_string(),
+                remove_state: true,
+                notify_id: None,
+                tp: None,
+            });
+            pb.inc(1);
+            // info!("Push Comment: {rpid}");
+            // info!("Vec Counts:{}", v.len());
+        }
+        page += 1;
+        if res["data"]["cursor"]["is_end"].as_bool().unwrap() == true {
+            pb.finish_with_message("Fetched successful from aicu.cc");
+            break;
+        }
+    }
+    v
+}
+
+async fn fetch_comment_both(cl: Arc<Client>) -> Vec<Comment> {
+    let mut seen_ids = HashSet::new();
+    let mut v1 = fetch_comment_from_aicu(Arc::clone(&cl)).await;
+    let v2 = fetch_comment(Arc::clone(&cl)).await;
+    v1.retain(|e| seen_ids.insert(e.rpid));
+    v2.into_iter().for_each(|item| {
+        if seen_ids.insert(item.rpid) {
+            v1.push(item);
+        }
+    });
+    v1
+}
+async fn remove_notify(cl: Arc<Client>, id: u64, csrf: String, tp: String) {
     let res = cl
         .post(
             "
@@ -593,7 +720,7 @@ https://api.bilibili.com/x/msgfeed/del",
 
 async fn fetch_remove_notifys(ck: String) {
     if let Message::ClientCreated { client: cl, csrf } = create_client(ck).await {
-        let mut v: Vec<(usize, u8)> = Vec::new();
+        let mut v: Vec<(u64, u8)> = Vec::new();
         let mut msgtype = MsgType::Like;
         let mut queryid = None;
         let mut last_time = None;
@@ -698,7 +825,7 @@ async fn fetch_remove_notifys(ck: String) {
             }
             dbg!(queryid, last_time);
             for i in notifys.as_array().unwrap() {
-                let notify_id = i["id"].as_u64().unwrap() as usize;
+                let notify_id = i["id"].as_u64().unwrap();
                 v.push((
                     notify_id,
                     match msgtype {
