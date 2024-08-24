@@ -92,7 +92,6 @@ impl Main {
             State::WaitingForCookie => {
                 match msg {
                     Message::CookieSubmited(s) => {
-                        println!("cookie submited: {}", s);
                         return Task::perform(create_client(s), move |m| m);
                     }
                     Message::CookieInputChanged(s) => {
