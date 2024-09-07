@@ -478,7 +478,8 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     info!("No URI, Skiped");
                     continue;
                 } else {
-                    panic!("Undefined URI:{}\nCan't get oid", uri);
+                    info!("Undefined URI:{}\nSkip this comment: {}", uri, rpid);
+                    continue;
                 }
                 let content = match msgtype {
                     MsgType::Like => i["item"]["title"].as_str().unwrap().to_string(),
