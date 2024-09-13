@@ -9,8 +9,8 @@ use iced::{
 };
 use indicatif::ProgressBar;
 use regex::Regex;
-use reqwest::Client;
 use reqwest::{header, Url};
+use reqwest::{Client, IntoUrl};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::{sync::Arc, time::Duration};
@@ -46,7 +46,7 @@ fn main() -> iced::Result {
         .run_with(Main::new)
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Main {
     cookie: String,
     client: Arc<Client>,
@@ -56,6 +56,20 @@ struct Main {
     select_state: bool,
     aicu_state: bool,
     sender: Option<Sender<(Arc<Client>, String, Comment)>>,
+}
+impl Default for Main {
+    fn default() -> Self {
+        Main {
+            cookie: String::default(),
+            client: Arc::new(Client::default()),
+            csrf: String::default(),
+            state: State::default(),
+            comments: None,
+            select_state: false,
+            aicu_state: true,
+            sender: None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -321,24 +335,20 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
         let notifys: &serde_json::Value;
         if queryid.is_none() && last_time.is_none() {
             // 第一次请求
-            let first = cl
-                .get(
-                    Url::parse(
-                        match msgtype {
-                            MsgType::Like=>"https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
-                            MsgType::Reply=>"https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web",
-                            MsgType::At=>"https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web"
-                        }
-                    )
-                    .unwrap(),
-                )
-                .send()
-                .await
-                .expect("Can't get first request");
-            json = serde_json::from_str(&first.text().await.unwrap()).unwrap();
-            if json["code"] != 0 {
-                panic!("Can't get first request, Json response: {}", json);
-            }
+            json = get_json(
+                Arc::clone(&cl),
+                match msgtype {
+                    MsgType::Like => {
+                        "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
+                    }
+                    MsgType::Reply => {
+                        "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
+                    }
+                    MsgType::At => "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
+                },
+            )
+            .await;
+
             match msgtype {
                 MsgType::Like => {
                     notifys = &json["data"]["total"]["items"];
@@ -386,8 +396,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     url.query_pairs_mut()
                         .append_pair("id", &queryid.unwrap().to_string())
                         .append_pair("like_time", &last_time.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get request");
-                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    json = get_json(Arc::clone(&cl), url).await;
                     notifys = &json["data"]["total"]["items"];
                     last_time = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
                     queryid = json["data"]["total"]["cursor"]["id"].as_u64();
@@ -396,8 +405,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     url.query_pairs_mut()
                         .append_pair("id", &queryid.unwrap().to_string())
                         .append_pair("reply_time", &last_time.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get request");
-                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    json = get_json(Arc::clone(&cl), url).await;
                     notifys = &json["data"]["items"];
                     last_time = notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
                     queryid = json["data"]["cursor"]["id"].as_u64();
@@ -406,8 +414,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     url.query_pairs_mut()
                         .append_pair("id", &queryid.unwrap().to_string())
                         .append_pair("at_time", &last_time.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get request");
-                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    json = get_json(Arc::clone(&cl), url).await;
                     notifys = &json["data"]["items"];
                     last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
                     queryid = json["data"]["cursor"]["id"].as_u64();
@@ -512,12 +519,12 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                         MsgType::At => Some(2),
                     },
                 });
-                pb.inc(1);
                 pb.set_message(format!(
                     "Push Comment: {}, Vec counts now: {}",
                     rpid,
                     v.len()
                 ));
+                pb.tick();
                 // info!("Push Comment: {rpid}");
                 // info!("Vec Counts:{}", v.len());
             }
@@ -601,15 +608,7 @@ async fn remove_comment(cl: Arc<Client>, csrf: String, i: Comment) -> Message {
 }
 
 async fn get_uid(cl: Arc<Client>) -> u64 {
-    let res = cl
-        .get("https://api.bilibili.com/x/member/web/account")
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    let json_res: serde_json::Value = serde_json::from_str(res.as_str()).unwrap();
+    let json_res = get_json(cl, "https://api.bilibili.com/x/member/web/account").await;
     json_res["data"]["mid"]
         .as_u64()
         .expect("Can't get uid. Please check your cookie data")
@@ -620,39 +619,27 @@ async fn fetch_comment_from_aicu(cl: Arc<Client>) -> Vec<Comment> {
     let mut v = Vec::new();
 
     // get counts & init progress bar
-    let total_replies = serde_json::from_str::<Value>(
-        cl.get(format!(
+    let total_replies = get_json(
+        Arc::clone(&cl),
+        format!(
             "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn=1&ps=0&mode=0&keyword=",
             uid
-        ))
-        .send()
-        .await
-        .expect("Can't get total_replies")
-        .text()
-        .await
-        .unwrap()
-        .as_str(),
+        ),
     )
-    .unwrap()["data"]["cursor"]["all_count"]
+    .await["data"]["cursor"]["all_count"]
         .as_u64()
         .unwrap();
     let pb = ProgressBar::new(total_replies);
     println!("正在从aicu.cc获取数据...");
     loop {
-        let res = serde_json::from_str::<Value>(
-            cl.get(format!(
+        let res = get_json(
+            Arc::clone(&cl),
+            format!(
                 "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn={}&ps=500&mode=0&keyword=",
                 uid, page
-            ))
-            .send()
-            .await
-            .expect("Can't get first request")
-            .text()
-            .await
-            .unwrap()
-            .as_str(),
+            ),
         )
-        .unwrap();
+        .await;
         let replies = &res["data"]["replies"];
         for i in replies.as_array().unwrap() {
             let rpid = i["rpid"].as_str().unwrap().parse().unwrap();
@@ -871,5 +858,50 @@ async fn fetch_remove_notifys(ck: String) {
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
         std::process::exit(0);
+    }
+}
+
+struct QRcode {
+    url: String,
+    key: String,
+}
+impl QRcode {
+    async fn request_qrcode(cl: Arc<Client>) -> QRcode {
+        let a = get_json(
+            cl,
+            "https://passport.bilibili.com/x/passport-login/web/qrcode/generate",
+        )
+        .await;
+        QRcode {
+            url: a["data"]["url"].to_string(),
+            key: a["data"]["qrcode_key"].to_string(),
+        }
+    }
+    async fn get_statu(&self, cl: Arc<Client>) -> u64 {
+        let url = format!(
+            "https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={}",
+            &self.key
+        );
+        let a = get_json(cl, &url).await;
+        a["data"]["code"].as_u64().unwrap()
+    }
+}
+
+async fn get_json<T: IntoUrl>(cl: Arc<Client>, url: T) -> Value {
+    let res = serde_json::from_str::<Value>(
+        cl.get("https://passport.bilibili.com/x/passport-login/web/qrcode/generate")
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+            .as_str(),
+    )
+    .unwrap();
+    if res["code"] == 0 {
+        panic!("Can't get request, Json response: {}", res);
+    } else {
+        res
     }
 }
