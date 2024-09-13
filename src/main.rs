@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{error, info};
 
-static HONGWEN: &[u8] = include_bytes!("assets/mysterious.jpg");
+static SOYO0: &[u8] = include_bytes!("assets/soyo0.png");
 static TAFFY: &[u8] = include_bytes!("assets/taffy.png");
 
 fn main() -> iced::Result {
@@ -85,7 +85,7 @@ enum State {
         qr_code_state: Option<u64>,
     },
     WaitingForInputCookie,
-    InitCompleted,
+    LoginSuccess,
     CommentsFetched,
 }
 
@@ -181,7 +181,7 @@ impl Main {
                             *qr_code_state = Some(v)
                         }
                         if v == 0 {
-                            self.state = State::InitCompleted;
+                            self.state = State::LoginSuccess;
                             let sender_clone = self.sender.as_ref().unwrap().clone();
                             return Task::batch([
                                 if self.aicu_state {
@@ -221,7 +221,7 @@ impl Main {
                     Message::ClientCreated { client, csrf } => {
                         self.client = Arc::new(client);
                         self.csrf = csrf;
-                        self.state = State::InitCompleted;
+                        self.state = State::LoginSuccess;
                         let sender_clone = self.sender.as_ref().unwrap().clone();
 
                         if self.aicu_state {
@@ -265,7 +265,7 @@ impl Main {
                 Task::none()
             }
 
-            State::InitCompleted => {
+            State::LoginSuccess => {
                 if let Message::CommentsFetched(comments) = msg {
                     self.comments = Some(comments);
                     self.state = State::CommentsFetched;
@@ -423,9 +423,9 @@ impl Main {
             )
             .padding(20)
             .into(),
-            State::InitCompleted => center(
+            State::LoginSuccess => center(
                 column![
-                    image(image::Handle::from_bytes(HONGWEN)).height(Length::FillPortion(2)),
+                    image(image::Handle::from_bytes(SOYO0)).height(Length::FillPortion(2)),
                     text("Fetching").height(Length::FillPortion(1))
                 ]
                 .padding(20)
@@ -439,15 +439,14 @@ impl Main {
                         "There are currently {} comments",
                         comments.lock().unwrap().len()
                     ));
-                    let mut cl = Column::new().padding([0, 15]);
-                    let cm = comments.lock().unwrap();
-                    for i in cm.iter().cloned() {
-                        cl = cl.push(
-                            checkbox(i.content.to_owned(), i.remove_state)
-                                .text_shaping(iced::widget::text::Shaping::Advanced)
-                                .on_toggle(move |b| Message::ChangeCommentRemoveState(i.rpid, b)),
-                        );
-                    }
+                    let a = comments.lock().unwrap();
+                    let cl = column(a.clone().into_iter().map(|i| {
+                        checkbox(i.content.to_owned(), i.remove_state)
+                            .text_shaping(iced::widget::text::Shaping::Advanced)
+                            .on_toggle(move |b| Message::ChangeCommentRemoveState(i.rpid, b))
+                            .into()
+                    }))
+                    .padding([0, 15]);
                     let comments = center(scrollable(cl).height(Length::Fill));
 
                     let controls = row![
@@ -461,7 +460,6 @@ impl Main {
                     ]
                     .height(Length::Shrink)
                     .padding([0, 15]);
-
                     center(
                         column![head, comments, controls]
                             .spacing(10)
