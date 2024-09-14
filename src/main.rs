@@ -1,24 +1,29 @@
 use iced::stream;
-use iced::widget::toggler;
+use iced::widget::{qr_code, toggler};
 use iced::{
     futures::SinkExt,
     widget::{
-        button, center, checkbox, column, image, row, scrollable, text, text_input, Column, Space,
+        button, center, checkbox, column, image, row, scrollable, text, text_input, Space,
     },
     Alignment, Element, Length, Subscription, Task,
 };
 use indicatif::ProgressBar;
 use regex::Regex;
-use reqwest::Client;
 use reqwest::{header, Url};
+use reqwest::{Client, IntoUrl};
 use serde_json::Value;
 use std::collections::HashSet;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex as StdMutex},
+    time::Duration,
+};
 use tokio::spawn;
 use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::Mutex;
+use tokio::time::sleep;
 use tracing::{error, info};
 
-static HONGWEN: &[u8] = include_bytes!("assets/mysterious.jpg");
+static SOYO0: &[u8] = include_bytes!("assets/soyo0.png");
 static TAFFY: &[u8] = include_bytes!("assets/taffy.png");
 
 fn main() -> iced::Result {
@@ -46,24 +51,52 @@ fn main() -> iced::Result {
         .run_with(Main::new)
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Main {
     cookie: String,
     client: Arc<Client>,
     csrf: String,
     state: State,
-    comments: Option<Vec<Comment>>,
+    comments: Option<Arc<StdMutex<Vec<Comment>>>>,
     select_state: bool,
     aicu_state: bool,
-    sender: Option<Sender<(Arc<Client>, String, Comment)>>,
+    sender: Option<Sender<ChannelMsg>>,
+}
+impl Default for Main {
+    fn default() -> Self {
+        Main {
+            cookie: String::default(),
+            client: Arc::new(Client::builder().cookie_store(true).build().unwrap()),
+            csrf: String::default(),
+            state: State::default(),
+            comments: None,
+            select_state: false,
+            aicu_state: true,
+            sender: None,
+        }
+    }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 enum State {
-    #[default]
-    WaitingForCookie,
-    InitCompleted,
+    WaitScanQRcode {
+        qr_data: Option<qr_code::Data>,
+        qr_code: Option<Arc<Mutex<QRcode>>>,
+        qr_code_state: Option<u64>,
+    },
+    WaitingForInputCookie,
+    LoginSuccess,
     CommentsFetched,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        State::WaitScanQRcode {
+            qr_data: None,
+            qr_code: None,
+            qr_code_state: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -71,25 +104,114 @@ enum Message {
     CookieSubmited(String),
     CookieInputChanged(String),
     ClientCreated { client: Client, csrf: String },
-    CommentsFetched(Vec<Comment>),
+    CommentsFetched(Arc<StdMutex<Vec<Comment>>>),
     ChangeCommentRemoveState(u64, bool),
     CommentsSelectAll,
     CommentsDeselectAll,
     DeleteComment,
     CommentDeleted { rpid: u64 },
     CommentDeleteError(i64),
-    ChannelConnected(Sender<(Arc<Client>, String, Comment)>),
+    ChannelConnected(Sender<ChannelMsg>),
     AicuToggle(bool),
+    QRcodeGot(QRcode),
+    QRcodeRefresh,
+    QRcodeState((u64, Option<std::string::String>)),
+    EntertoCookieInput,
+    EntertoQRcodeScan,
+}
+
+enum ChannelMsg {
+    DeleteComment(Arc<Client>, String, Comment),
+    StartRefreshQRcodeState,
+    StopRefreshQRcodeState,
 }
 
 impl Main {
     fn new() -> (Self, Task<Message>) {
-        (Self::default(), Task::none())
+        (
+            Self::default(),
+            Task::perform(QRcode::request_qrcode(), Message::QRcodeGot),
+        )
     }
 
     fn update(&mut self, msg: Message) -> Task<Message> {
         match self.state {
-            State::WaitingForCookie => {
+            State::WaitScanQRcode {
+                ref mut qr_code,
+                ref mut qr_data,
+                ..
+            } => {
+                match msg {
+                    Message::QRcodeGot(d) => {
+                        *qr_data = Some(qr_code::Data::new(d.url.clone()).unwrap());
+                        *qr_code = Some(Arc::new(Mutex::new(d)));
+                        let sender_clone = self.sender.as_ref().unwrap().clone();
+                        return Task::perform(
+                            async move { sender_clone.send(ChannelMsg::StartRefreshQRcodeState).await },
+                            |_| Message::QRcodeRefresh,
+                        );
+                    }
+                    Message::AicuToggle(b) => {
+                        self.aicu_state = b;
+                    }
+                    Message::ChannelConnected(s) => {
+                        self.sender = Some(s);
+                    }
+                    Message::QRcodeRefresh => {
+                        if let State::WaitScanQRcode { ref qr_code, .. } = self.state {
+                            if let Some(v) = qr_code {
+                                let v = Arc::clone(v);
+                                let cl = Arc::clone(&self.client);
+                                return Task::perform(
+                                    async move {
+                                        let v = v.lock().await;
+                                        v.get_state(cl).await
+                                    },
+                                    Message::QRcodeState,
+                                );
+                            }
+                        }
+                    }
+                    Message::QRcodeState(v) => {
+                        if let State::WaitScanQRcode {
+                            ref mut qr_code_state,
+                            ..
+                        } = self.state
+                        {
+                            *qr_code_state = Some(v.0)
+                        }
+                        if v.0 == 0 {
+                            self.csrf = v.1.unwrap();
+                            self.state = State::LoginSuccess;
+                            let sender_clone = self.sender.as_ref().unwrap().clone();
+                            return Task::batch([
+                                if self.aicu_state {
+                                    Task::perform(
+                                        fetch_comment_both(Arc::clone(&self.client)),
+                                        |c| Message::CommentsFetched(Arc::new(StdMutex::new(c))),
+                                    )
+                                } else {
+                                    Task::perform(fetch_comment(Arc::clone(&self.client)), |c| {
+                                        Message::CommentsFetched(Arc::new(StdMutex::new(c)))
+                                    })
+                                },
+                                Task::perform(
+                                    async move {
+                                        sender_clone.send(ChannelMsg::StopRefreshQRcodeState).await
+                                    },
+                                    |_| Message::QRcodeRefresh,
+                                ),
+                            ]);
+                        }
+                    }
+                    Message::EntertoCookieInput => {
+                        self.state = State::WaitingForInputCookie;
+                    }
+                    _ => {}
+                }
+                Task::none()
+            }
+            State::WaitingForInputCookie => {
                 match msg {
                     Message::CookieSubmited(s) => {
                         return Task::perform(create_client(s), move |m| m);
@@ -100,30 +222,51 @@ impl Main {
                     Message::ClientCreated { client, csrf } => {
                         self.client = Arc::new(client);
                         self.csrf = csrf;
-                        self.state = State::InitCompleted;
+                        self.state = State::LoginSuccess;
+                        let sender_clone = self.sender.as_ref().unwrap().clone();
+
                         if self.aicu_state {
-                            return Task::perform(
-                                fetch_comment_both(Arc::clone(&self.client)),
-                                Message::CommentsFetched,
-                            );
+                            return Task::batch([
+                                Task::perform(fetch_comment_both(Arc::clone(&self.client)), |c| {
+                                    Message::CommentsFetched(Arc::new(StdMutex::new(c)))
+                                }),
+                                Task::perform(
+                                    async move {
+                                        sender_clone.send(ChannelMsg::StopRefreshQRcodeState).await
+                                    },
+                                    |_| Message::QRcodeRefresh,
+                                ),
+                            ]);
                         }
-                        return Task::perform(
-                            fetch_comment(Arc::clone(&self.client)),
-                            Message::CommentsFetched,
-                        );
-                    }
-                    Message::ChannelConnected(s) => {
-                        self.sender = Some(s);
+                        return Task::batch([
+                            Task::perform(fetch_comment(Arc::clone(&self.client)), |c| {
+                                Message::CommentsFetched(Arc::new(StdMutex::new(c)))
+                            }),
+                            Task::perform(
+                                async move {
+                                    sender_clone.send(ChannelMsg::StopRefreshQRcodeState).await
+                                },
+                                |_| Message::QRcodeRefresh,
+                            ),
+                        ]);
                     }
                     Message::AicuToggle(b) => {
                         self.aicu_state = b;
+                    }
+                    Message::EntertoQRcodeScan => {
+                        self.state = State::WaitScanQRcode {
+                            qr_code: None,
+                            qr_data: None,
+                            qr_code_state: None,
+                        };
+                        return Task::perform(QRcode::request_qrcode(), Message::QRcodeGot);
                     }
                     _ => {}
                 }
                 Task::none()
             }
 
-            State::InitCompleted => {
+            State::LoginSuccess => {
                 if let Message::CommentsFetched(comments) = msg {
                     self.comments = Some(comments);
                     self.state = State::CommentsFetched;
@@ -133,39 +276,47 @@ impl Main {
             State::CommentsFetched => {
                 match msg {
                     Message::ChangeCommentRemoveState(rpid, b) => {
-                        for i in self.comments.as_mut().unwrap() {
+                        for i in self.comments.as_mut().unwrap().lock().unwrap().iter_mut() {
                             if i.rpid == rpid {
                                 i.remove_state = b;
                             }
                         }
                     }
                     Message::CommentsSelectAll => {
-                        for i in self.comments.as_mut().unwrap() {
+                        for i in self.comments.as_mut().unwrap().lock().unwrap().iter_mut() {
                             i.remove_state = true;
                         }
                         self.select_state = false;
                     }
                     Message::CommentsDeselectAll => {
-                        for i in self.comments.as_mut().unwrap() {
+                        for i in self.comments.as_mut().unwrap().lock().unwrap().iter_mut() {
                             i.remove_state = false;
                         }
                         self.select_state = true;
                     }
                     Message::DeleteComment => {
-                        for i in self.comments.as_ref().unwrap() {
+                        for i in self.comments.as_ref().unwrap().lock().unwrap().iter() {
                             let sender = self.sender.as_ref().unwrap().clone();
                             let cl = Arc::clone(&self.client);
                             let csrf = self.csrf.clone();
                             let comment = i.clone();
                             if i.remove_state {
                                 spawn(async move {
-                                    sender.send((cl, csrf, comment)).await.unwrap();
+                                    sender
+                                        .send(ChannelMsg::DeleteComment(cl, csrf, comment))
+                                        .await
+                                        .unwrap();
                                 });
                             }
                         }
                     }
                     Message::CommentDeleted { rpid } => {
-                        self.comments.as_mut().unwrap().retain(|e| e.rpid != rpid);
+                        self.comments
+                            .as_mut()
+                            .unwrap()
+                            .lock()
+                            .unwrap()
+                            .retain(|e| e.rpid != rpid);
                     }
                     _ => {}
                 }
@@ -182,15 +333,32 @@ impl Main {
                     .send(Message::ChannelConnected(sender))
                     .await
                     .unwrap();
+                let qrcode_refresh_flag = Arc::new(Mutex::new(false));
                 loop {
                     match receiver.recv().await {
-                        Some(message) => {
-                            info!("Channel Get: {}", message.2.rpid);
-                            output
-                                .send(remove_comment(message.0, message.1, message.2).await)
-                                .await
-                                .unwrap();
-                        }
+                        Some(m) => match m {
+                            ChannelMsg::DeleteComment(cl, csrf, comment) => {
+                                info!("Channel Get: {}", comment.rpid);
+                                output
+                                    .send(remove_comment(cl, csrf, comment).await)
+                                    .await
+                                    .unwrap();
+                            }
+                            ChannelMsg::StartRefreshQRcodeState => {
+                                *qrcode_refresh_flag.lock().await = true;
+                                let qrcode_refresh_flag_clone = Arc::clone(&qrcode_refresh_flag);
+                                let mut output_clone = output.clone();
+                                spawn(async move {
+                                    while *qrcode_refresh_flag_clone.lock().await {
+                                        output_clone.send(Message::QRcodeRefresh).await.unwrap();
+                                        sleep(Duration::from_secs(1)).await;
+                                    }
+                                });
+                            }
+                            ChannelMsg::StopRefreshQRcodeState => {
+                                *qrcode_refresh_flag.lock().await = false;
+                            }
+                        },
                         None => error!("Channel接收错误"),
                     }
                 }
@@ -200,7 +368,40 @@ impl Main {
 
     fn view(&self) -> Element<Message> {
         match self.state {
-            State::WaitingForCookie => center(
+            State::WaitScanQRcode {
+                ref qr_data,
+                ref qr_code_state,
+                ..
+            } => {
+                if let Some(v) = qr_data {
+                    let mut cl = column![qr_code(v)];
+                    if let Some(c) = qr_code_state {
+                        let resmsg = match c {
+                            0 => "扫码登录成功".to_string(),
+                            86038 => "二维码已失效".to_string(),
+                            86090 => "已扫码，未确认".to_string(),
+                            86101 => "未扫码".to_string(),
+                            _ => format!("未知代码：{}", c),
+                        };
+                        cl = cl
+                            .push(text(resmsg).shaping(text::Shaping::Advanced))
+                            .push(toggler(
+                                Some("Also fetch comments from aicu.cc".into()),
+                                self.aicu_state,
+                                Message::AicuToggle,
+                            ))
+                            .push(row![
+                                Space::with_width(Length::Fill),
+                                button("Change to input cookie")
+                                    .on_press(Message::EntertoCookieInput)
+                            ]);
+                    }
+                    center(cl.spacing(10).align_x(Alignment::Center)).into()
+                } else {
+                    center("QRCode is loading...").into()
+                }
+            }
+            State::WaitingForInputCookie => center(
                 column![
                     row![
                         text_input("Input cookie here", &self.cookie)
@@ -213,15 +414,19 @@ impl Main {
                         Some("Also fetch comments from aicu.cc".into()),
                         self.aicu_state,
                         Message::AicuToggle
-                    )
+                    ),
+                    row![
+                        Space::with_width(Length::Fill),
+                        button("Change to scan QR code").on_press(Message::EntertoQRcodeScan)
+                    ]
                 ]
                 .spacing(5),
             )
             .padding(20)
             .into(),
-            State::InitCompleted => center(
+            State::LoginSuccess => center(
                 column![
-                    image(image::Handle::from_bytes(HONGWEN)).height(Length::FillPortion(2)),
+                    image(image::Handle::from_bytes(SOYO0)).height(Length::FillPortion(2)),
                     text("Fetching").height(Length::FillPortion(1))
                 ]
                 .padding(20)
@@ -231,15 +436,18 @@ impl Main {
             .into(),
             State::CommentsFetched => {
                 if let Some(comments) = &self.comments {
-                    let head = text(format!("There are currently {} comments", comments.len()));
-                    let mut cl = Column::new().padding([0, 15]);
-                    for i in comments {
-                        cl = cl.push(
-                            checkbox(i.content.to_owned(), i.remove_state)
-                                .text_shaping(iced::widget::text::Shaping::Advanced)
-                                .on_toggle(|b| Message::ChangeCommentRemoveState(i.rpid, b)),
-                        );
-                    }
+                    let head = text(format!(
+                        "There are currently {} comments",
+                        comments.lock().unwrap().len()
+                    ));
+                    let a = comments.lock().unwrap();
+                    let cl = column(a.clone().into_iter().map(|i| {
+                        checkbox(i.content.to_owned(), i.remove_state)
+                            .text_shaping(iced::widget::text::Shaping::Advanced)
+                            .on_toggle(move |b| Message::ChangeCommentRemoveState(i.rpid, b))
+                            .into()
+                    }))
+                    .padding([0, 15]);
                     let comments = center(scrollable(cl).height(Length::Fill));
 
                     let controls = row![
@@ -253,7 +461,6 @@ impl Main {
                     ]
                     .height(Length::Shrink)
                     .padding([0, 15]);
-
                     center(
                         column![head, comments, controls]
                             .spacing(10)
@@ -321,24 +528,20 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
         let notifys: &serde_json::Value;
         if queryid.is_none() && last_time.is_none() {
             // 第一次请求
-            let first = cl
-                .get(
-                    Url::parse(
-                        match msgtype {
-                            MsgType::Like=>"https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
-                            MsgType::Reply=>"https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web",
-                            MsgType::At=>"https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web"
-                        }
-                    )
-                    .unwrap(),
-                )
-                .send()
-                .await
-                .expect("Can't get first request");
-            json = serde_json::from_str(&first.text().await.unwrap()).unwrap();
-            if json["code"] != 0 {
-                panic!("Can't get first request, Json response: {}", json);
-            }
+            json = get_json(
+                Arc::clone(&cl),
+                match msgtype {
+                    MsgType::Like => {
+                        "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
+                    }
+                    MsgType::Reply => {
+                        "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
+                    }
+                    MsgType::At => "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
+                },
+            )
+            .await;
+
             match msgtype {
                 MsgType::Like => {
                     notifys = &json["data"]["total"]["items"];
@@ -386,8 +589,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     url.query_pairs_mut()
                         .append_pair("id", &queryid.unwrap().to_string())
                         .append_pair("like_time", &last_time.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get request");
-                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    json = get_json(Arc::clone(&cl), url).await;
                     notifys = &json["data"]["total"]["items"];
                     last_time = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
                     queryid = json["data"]["total"]["cursor"]["id"].as_u64();
@@ -396,8 +598,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     url.query_pairs_mut()
                         .append_pair("id", &queryid.unwrap().to_string())
                         .append_pair("reply_time", &last_time.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get request");
-                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    json = get_json(Arc::clone(&cl), url).await;
                     notifys = &json["data"]["items"];
                     last_time = notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
                     queryid = json["data"]["cursor"]["id"].as_u64();
@@ -406,8 +607,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                     url.query_pairs_mut()
                         .append_pair("id", &queryid.unwrap().to_string())
                         .append_pair("at_time", &last_time.unwrap().to_string());
-                    let other = cl.get(url).send().await.expect("Can't get request");
-                    json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
+                    json = get_json(Arc::clone(&cl), url).await;
                     notifys = &json["data"]["items"];
                     last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
                     queryid = json["data"]["cursor"]["id"].as_u64();
@@ -427,7 +627,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                 } else {
                     for i in &v {
                         if i.rpid == rpid {
-                            info!("Duplicate Comment: {rpid}");
+                            pb.set_message(format!("Duplicate Comment: {rpid}"));
                             continue 'outer;
                         }
                     }
@@ -512,12 +712,12 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
                         MsgType::At => Some(2),
                     },
                 });
-                pb.inc(1);
                 pb.set_message(format!(
                     "Push Comment: {}, Vec counts now: {}",
                     rpid,
                     v.len()
                 ));
+                pb.tick();
                 // info!("Push Comment: {rpid}");
                 // info!("Vec Counts:{}", v.len());
             }
@@ -601,15 +801,7 @@ async fn remove_comment(cl: Arc<Client>, csrf: String, i: Comment) -> Message {
 }
 
 async fn get_uid(cl: Arc<Client>) -> u64 {
-    let res = cl
-        .get("https://api.bilibili.com/x/member/web/account")
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    let json_res: serde_json::Value = serde_json::from_str(res.as_str()).unwrap();
+    let json_res = get_json(cl, "https://api.bilibili.com/x/member/web/account").await;
     json_res["data"]["mid"]
         .as_u64()
         .expect("Can't get uid. Please check your cookie data")
@@ -620,39 +812,27 @@ async fn fetch_comment_from_aicu(cl: Arc<Client>) -> Vec<Comment> {
     let mut v = Vec::new();
 
     // get counts & init progress bar
-    let total_replies = serde_json::from_str::<Value>(
-        cl.get(format!(
+    let total_replies = get_json(
+        Arc::clone(&cl),
+        format!(
             "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn=1&ps=0&mode=0&keyword=",
             uid
-        ))
-        .send()
-        .await
-        .expect("Can't get total_replies")
-        .text()
-        .await
-        .unwrap()
-        .as_str(),
+        ),
     )
-    .unwrap()["data"]["cursor"]["all_count"]
+    .await["data"]["cursor"]["all_count"]
         .as_u64()
         .unwrap();
     let pb = ProgressBar::new(total_replies);
     println!("正在从aicu.cc获取数据...");
     loop {
-        let res = serde_json::from_str::<Value>(
-            cl.get(format!(
+        let res = get_json(
+            Arc::clone(&cl),
+            format!(
                 "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn={}&ps=500&mode=0&keyword=",
                 uid, page
-            ))
-            .send()
-            .await
-            .expect("Can't get first request")
-            .text()
-            .await
-            .unwrap()
-            .as_str(),
+            ),
         )
-        .unwrap();
+        .await;
         let replies = &res["data"]["replies"];
         for i in replies.as_array().unwrap() {
             let rpid = i["rpid"].as_str().unwrap().parse().unwrap();
@@ -715,6 +895,60 @@ https://api.bilibili.com/x/msgfeed/del",
         info!("remove notify {id} success");
     } else {
         error!("Can't remove notify. Response json: {}", json_res);
+    }
+}
+#[derive(Debug, Clone)]
+struct QRcode {
+    url: String,
+    key: String,
+}
+impl QRcode {
+    async fn request_qrcode() -> QRcode {
+        let a = get_json(
+            Arc::new(Client::new()),
+            "https://passport.bilibili.com/x/passport-login/web/qrcode/generate",
+        )
+        .await;
+        QRcode {
+            url: a["data"]["url"].as_str().unwrap().to_string(),
+            key: a["data"]["qrcode_key"].as_str().unwrap().to_string(),
+        }
+    }
+    async fn get_state(&self, cl: Arc<Client>) -> (u64, Option<String>) {
+        let url = format!(
+            "https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={}",
+            &self.key
+        );
+        let res = get_json(cl, &url).await;
+        let res_code = res["data"]["code"].as_u64().unwrap();
+        if res_code == 0 {
+            let res_url = res["data"]["url"].as_str().unwrap();
+            let a = res_url.find("bili_jct=").expect("Can't find csrf data.");
+            let b = res_url[a..].find("&").unwrap();
+            let csrf = res_url[a + 9..b + a].to_string();
+            return (res_code, Some(csrf));
+        }
+        (res_code, None)
+    }
+}
+
+async fn get_json<T: IntoUrl>(cl: Arc<Client>, url: T) -> Value {
+    let res = serde_json::from_str::<Value>(
+        cl.get(url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+            .as_str(),
+    )
+    .unwrap();
+    // dbg!(&res);
+    if res["code"] != 0 {
+        panic!("Can't get request, Json response: {}", res);
+    } else {
+        res
     }
 }
 

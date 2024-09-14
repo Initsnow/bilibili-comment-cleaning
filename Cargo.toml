@@ -8,6 +8,7 @@ iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", feature
     "tokio",
     "image",
     "debug",
+    "qr_code",
 ] }
 indicatif = "0.17.8"
 regex = "1.10.6"
