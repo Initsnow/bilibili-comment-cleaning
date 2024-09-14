@@ -3,7 +3,7 @@ use iced::widget::{qr_code, toggler};
 use iced::{
     futures::SinkExt,
     widget::{
-        button, center, checkbox, column, image, row, scrollable, text, text_input, Column, Space,
+        button, center, checkbox, column, image, row, scrollable, text, text_input, Space,
     },
     Alignment, Element, Length, Subscription, Task,
 };
@@ -115,7 +115,7 @@ enum Message {
     AicuToggle(bool),
     QRcodeGot(QRcode),
     QRcodeRefresh,
-    QRcodeState(u64),
+    QRcodeState((u64, Option<std::string::String>)),
     EntertoCookieInput,
     EntertoQRcodeScan,
 }
@@ -160,7 +160,7 @@ impl Main {
                     Message::QRcodeRefresh => {
                         if let State::WaitScanQRcode { ref qr_code, .. } = self.state {
                             if let Some(v) = qr_code {
-                                let v = Arc::clone(&v);
+                                let v = Arc::clone(v);
                                 let cl = Arc::clone(&self.client);
                                 return Task::perform(
                                     async move {
@@ -178,9 +178,10 @@ impl Main {
                             ..
                         } = self.state
                         {
-                            *qr_code_state = Some(v)
+                            *qr_code_state = Some(v.0)
                         }
-                        if v == 0 {
+                        if v.0 == 0 {
+                            self.csrf = v.1.unwrap();
                             self.state = State::LoginSuccess;
                             let sender_clone = self.sender.as_ref().unwrap().clone();
                             return Task::batch([
@@ -332,7 +333,7 @@ impl Main {
                     .send(Message::ChannelConnected(sender))
                     .await
                     .unwrap();
-                let mut qrcode_refresh_flag = Arc::new(Mutex::new(false));
+                let qrcode_refresh_flag = Arc::new(Mutex::new(false));
                 loop {
                     match receiver.recv().await {
                         Some(m) => match m {
@@ -913,13 +914,21 @@ impl QRcode {
             key: a["data"]["qrcode_key"].as_str().unwrap().to_string(),
         }
     }
-    async fn get_state(&self, cl: Arc<Client>) -> u64 {
+    async fn get_state(&self, cl: Arc<Client>) -> (u64, Option<String>) {
         let url = format!(
             "https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={}",
             &self.key
         );
-        let a = get_json(cl, &url).await;
-        a["data"]["code"].as_u64().unwrap()
+        let res = get_json(cl, &url).await;
+        let res_code = res["data"]["code"].as_u64().unwrap();
+        if res_code == 0 {
+            let res_url = res["data"]["url"].as_str().unwrap();
+            let a = res_url.find("bili_jct=").expect("Can't find csrf data.");
+            let b = res_url[a..].find("&").unwrap();
+            let csrf = res_url[a + 9..b + a].to_string();
+            return (res_code, Some(csrf));
+        }
+        (res_code, None)
     }
 }
 
