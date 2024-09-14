@@ -2,9 +2,7 @@ use iced::stream;
 use iced::widget::{qr_code, toggler};
 use iced::{
     futures::SinkExt,
-    widget::{
-        button, center, checkbox, column, image, row, scrollable, text, text_input, Space,
-    },
+    widget::{button, center, checkbox, column, image, row, scrollable, text, text_input, Space},
     Alignment, Element, Length, Subscription, Task,
 };
 use indicatif::ProgressBar;

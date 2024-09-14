@@ -1,10 +1,15 @@
 ## 使用
 
-随便进一个b站的 [api](https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web) 网页获取 cookie 再输入
+### GUI
 
-- 不加任何参数打开 GUI 界面
-- Cli 只有一个功能
-    > 删除所有通知：`bilibili-comment-cleaning.exe --remove_notifys "{此处填cookie}"`
+#### 登录
+
+- 通过二维码
+- 通过 Cookie
+    随便进一个b站的 [api](https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web) 网页获取 Cookie 再输入
+
+### CLI
+删除所有通知：`bilibili-comment-cleaning.exe --remove_notifys "{此处填cookie}"`
 
 ## 如何做到的
 
