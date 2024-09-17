@@ -1,24 +1,27 @@
-use iced::stream;
-use iced::widget::{qr_code, toggler};
 use iced::{
     futures::SinkExt,
-    widget::{button, center, checkbox, column, image, row, scrollable, text, text_input, Space},
+    stream,
+    widget::{
+        button, center, checkbox, column, image, qr_code, row, scrollable, text, text_input,
+        toggler, Space,
+    },
     Alignment, Element, Length, Subscription, Task,
 };
 use indicatif::ProgressBar;
 use regex::Regex;
-use reqwest::{header, Url};
-use reqwest::{Client, IntoUrl};
+use reqwest::{header, Client, IntoUrl, Url};
 use serde_json::Value;
-use std::collections::HashSet;
 use std::{
-    sync::{Arc, Mutex as StdMutex},
+    collections::HashSet,
+    sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::spawn;
-use tokio::sync::mpsc::{self, Sender};
-use tokio::sync::Mutex;
-use tokio::time::sleep;
+use tokio::{
+    spawn,
+    sync::mpsc::{self, Sender},
+    sync::Mutex as TokioMutex,
+    time::sleep,
+};
 use tracing::{error, info};
 
 static SOYO0: &[u8] = include_bytes!("assets/soyo0.png");
@@ -55,7 +58,7 @@ struct Main {
     client: Arc<Client>,
     csrf: String,
     state: State,
-    comments: Option<Arc<StdMutex<Vec<Comment>>>>,
+    comments: Option<Arc<Mutex<Vec<Comment>>>>,
     select_state: bool,
     aicu_state: bool,
     sender: Option<Sender<ChannelMsg>>,
@@ -79,7 +82,7 @@ impl Default for Main {
 enum State {
     WaitScanQRcode {
         qr_data: Option<qr_code::Data>,
-        qr_code: Option<Arc<Mutex<QRcode>>>,
+        qr_code: Option<Arc<TokioMutex<QRcode>>>,
         qr_code_state: Option<u64>,
     },
     WaitingForInputCookie,
@@ -102,7 +105,7 @@ enum Message {
     CookieSubmited(String),
     CookieInputChanged(String),
     ClientCreated { client: Client, csrf: String },
-    CommentsFetched(Arc<StdMutex<Vec<Comment>>>),
+    CommentsFetched(Arc<Mutex<Vec<Comment>>>),
     ChangeCommentRemoveState(u64, bool),
     CommentsSelectAll,
     CommentsDeselectAll,
@@ -142,7 +145,7 @@ impl Main {
                 match msg {
                     Message::QRcodeGot(d) => {
                         *qr_data = Some(qr_code::Data::new(d.url.clone()).unwrap());
-                        *qr_code = Some(Arc::new(Mutex::new(d)));
+                        *qr_code = Some(Arc::new(TokioMutex::new(d)));
                         let sender_clone = self.sender.as_ref().unwrap().clone();
                         return Task::perform(
                             async move { sender_clone.send(ChannelMsg::StartRefreshQRcodeState).await },
@@ -186,12 +189,13 @@ impl Main {
                                 if self.aicu_state {
                                     Task::perform(
                                         fetch_comment_both(Arc::clone(&self.client)),
-                                        |c| Message::CommentsFetched(Arc::new(StdMutex::new(c))),
+                                        Message::CommentsFetched,
                                     )
                                 } else {
-                                    Task::perform(fetch_comment(Arc::clone(&self.client)), |c| {
-                                        Message::CommentsFetched(Arc::new(StdMutex::new(c)))
-                                    })
+                                    Task::perform(
+                                        fetch_comment(Arc::clone(&self.client)),
+                                        Message::CommentsFetched,
+                                    )
                                 },
                                 Task::perform(
                                     async move {
@@ -225,9 +229,10 @@ impl Main {
 
                         if self.aicu_state {
                             return Task::batch([
-                                Task::perform(fetch_comment_both(Arc::clone(&self.client)), |c| {
-                                    Message::CommentsFetched(Arc::new(StdMutex::new(c)))
-                                }),
+                                Task::perform(
+                                    fetch_comment_both(Arc::clone(&self.client)),
+                                    Message::CommentsFetched,
+                                ),
                                 Task::perform(
                                     async move {
                                         sender_clone.send(ChannelMsg::StopRefreshQRcodeState).await
@@ -237,9 +242,10 @@ impl Main {
                             ]);
                         }
                         return Task::batch([
-                            Task::perform(fetch_comment(Arc::clone(&self.client)), |c| {
-                                Message::CommentsFetched(Arc::new(StdMutex::new(c)))
-                            }),
+                            Task::perform(
+                                fetch_comment(Arc::clone(&self.client)),
+                                Message::CommentsFetched,
+                            ),
                             Task::perform(
                                 async move {
                                     sender_clone.send(ChannelMsg::StopRefreshQRcodeState).await
@@ -331,7 +337,7 @@ impl Main {
                     .send(Message::ChannelConnected(sender))
                     .await
                     .unwrap();
-                let qrcode_refresh_flag = Arc::new(Mutex::new(false));
+                let qrcode_refresh_flag = Arc::new(TokioMutex::new(false));
                 loop {
                     match receiver.recv().await {
                         Some(m) => match m {
@@ -439,8 +445,8 @@ impl Main {
                         comments.lock().unwrap().len()
                     ));
                     let a = comments.lock().unwrap();
-                    let cl = column(a.clone().into_iter().map(|i| {
-                        checkbox(i.content.to_owned(), i.remove_state)
+                    let cl = column(a.iter().cloned().map(|i| {
+                        checkbox(i.content, i.remove_state)
                             .text_shaping(iced::widget::text::Shaping::Advanced)
                             .on_toggle(move |b| Message::ChangeCommentRemoveState(i.rpid, b))
                             .into()
@@ -486,6 +492,7 @@ struct Comment {
     /// 删除通知用 0为收到赞的 1为收到评论的 2为被At的
     tp: Option<u8>,
 }
+
 async fn create_client(ck: String) -> Message {
     let a = ck
         .find("bili_jct=")
@@ -514,7 +521,7 @@ enum MsgType {
     At,
 }
 
-async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
+async fn fetch_comment(cl: Arc<Client>) -> Arc<Mutex<Vec<Comment>>> {
     let mut v: Vec<Comment> = Vec::new();
     let oid_regex = Regex::new(r"bilibili://video/(\d+)").unwrap();
     let mut msgtype = MsgType::Like;
@@ -749,7 +756,7 @@ async fn fetch_comment(cl: Arc<Client>) -> Vec<Comment> {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    v
+    Arc::new(Mutex::new(v))
 }
 
 async fn remove_comment(cl: Arc<Client>, csrf: String, i: Comment) -> Message {
@@ -804,7 +811,7 @@ async fn get_uid(cl: Arc<Client>) -> u64 {
         .as_u64()
         .expect("Can't get uid. Please check your cookie data")
 }
-async fn fetch_comment_from_aicu(cl: Arc<Client>) -> Vec<Comment> {
+async fn fetch_comment_from_aicu(cl: Arc<Client>) -> Arc<Mutex<Vec<Comment>>> {
     let uid = get_uid(Arc::clone(&cl)).await;
     let mut page = 1;
     let mut v = Vec::new();
@@ -853,17 +860,17 @@ async fn fetch_comment_from_aicu(cl: Arc<Client>) -> Vec<Comment> {
             break;
         }
     }
-    v
+    Arc::new(Mutex::new(v))
 }
 
-async fn fetch_comment_both(cl: Arc<Client>) -> Vec<Comment> {
+async fn fetch_comment_both(cl: Arc<Client>) -> Arc<Mutex<Vec<Comment>>> {
     let mut seen_ids = HashSet::new();
-    let mut v1 = fetch_comment_from_aicu(Arc::clone(&cl)).await;
+    let v1 = fetch_comment_from_aicu(Arc::clone(&cl)).await;
     let v2 = fetch_comment(Arc::clone(&cl)).await;
-    v1.retain(|e| seen_ids.insert(e.rpid));
-    v2.into_iter().for_each(|item| {
+    v1.lock().unwrap().retain(|e| seen_ids.insert(e.rpid));
+    v2.lock().unwrap().iter().for_each(|item| {
         if seen_ids.insert(item.rpid) {
-            v1.push(item);
+            v1.lock().unwrap().push(item.clone());
         }
     });
     v1
