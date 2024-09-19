@@ -397,7 +397,9 @@ impl Main {
                             ChannelMsg::DeleteComment(cl, csrf, c, seconds) => {
                                 let c = c.lock().await;
                                 let comments = c
-                                    .iter().filter(|&e| e.remove_state).cloned()
+                                    .iter()
+                                    .filter(|&e| e.remove_state)
+                                    .cloned()
                                     .collect::<Vec<_>>();
                                 if comments.is_empty() {
                                     continue;
@@ -984,14 +986,22 @@ async fn fetch_comment_both(cl: Arc<Client>) -> Arc<Mutex<Vec<Comment>>> {
     let mut seen_ids = HashSet::new();
     let v1 = fetch_comment_from_aicu(Arc::clone(&cl)).await;
     let v2 = fetch_comment(Arc::clone(&cl)).await;
-    v1.lock().await.retain(|e| seen_ids.insert(e.rpid));
-    v2.lock().await.iter().for_each(|item| {
-        if seen_ids.insert(item.rpid) {
-            v1.blocking_lock().push(item.clone());
-        }
-    });
+
+    {
+        let mut v1_locked = v1.lock().await;
+        v1_locked.retain(|e| seen_ids.insert(e.rpid));
+
+        let v2_locked = v2.lock().await;
+        v2_locked.iter().for_each(|item| {
+            if seen_ids.insert(item.rpid) {
+                v1_locked.push(item.clone());
+            }
+        });
+    }
+
     v1
 }
+
 async fn remove_notify(cl: Arc<Client>, id: u64, csrf: Arc<String>, tp: String) {
     let res = cl
         .post(
