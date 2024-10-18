@@ -6,7 +6,8 @@
 
 - 通过二维码
 - 通过 Cookie
-    随便进一个b站的 [api](https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web) 网页获取 Cookie 再输入
+    
+    > 随便进一个b站的 [api](https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web) 网页获取 Cookie 再输入
 
 ### CLI
 删除所有通知：`bilibili-comment-cleaning.exe --remove_notifys "{此处填cookie}"`

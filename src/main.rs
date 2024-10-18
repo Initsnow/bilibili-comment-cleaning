@@ -1,16 +1,8 @@
-use iced::{
-    futures::SinkExt,
-    stream,
-    widget::{
-        button, center, checkbox, column, image, qr_code, row, scrollable, text, text_input,
-        toggler, Space,
-    },
-    Alignment, Element, Length, Subscription, Task,
-};
+use bilibili_comment_cleaning::get_json;
+use iced::{futures::SinkExt, stream, widget::qr_code, Element, Subscription, Task};
 use indicatif::ProgressBar;
 use regex::Regex;
-use reqwest::{header, Client, IntoUrl, Url};
-use serde_json::Value;
+use reqwest::{header, Client, Url};
 use std::{
     collections::HashSet,
     sync::{
@@ -21,11 +13,18 @@ use std::{
 };
 use tokio::{
     spawn,
-    sync::mpsc::{self, Sender},
-    sync::Mutex,
+    sync::{
+        mpsc::{self, Sender},
+        Mutex,
+    },
+    task::JoinHandle,
     time::sleep,
 };
 use tracing::{error, info};
+mod pages;
+mod types;
+use pages::{cookie_page, fetched_page, fetching_page, qrcode_page};
+use types::{ChannelMsg, Comment, Message, QRcode};
 
 static SOYO0: &[u8] = include_bytes!("assets/soyo0.png");
 static TAFFY: &[u8] = include_bytes!("assets/taffy.png");
@@ -64,7 +63,6 @@ struct Main {
     aicu_state: bool,
     sender: Option<Sender<ChannelMsg>>,
     sleep_seconds: String,
-    delete_state: bool,
 }
 impl Default for Main {
     fn default() -> Self {
@@ -82,7 +80,6 @@ impl Default for Main {
             aicu_state: true,
             sender: None,
             sleep_seconds: String::default(),
-            delete_state: true,
         }
     }
 }
@@ -107,38 +104,6 @@ impl Default for State {
             qr_code_state: None,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-enum Message {
-    CookieSubmited(String),
-    CookieInputChanged(String),
-    ClientCreated { client: Client, csrf: String },
-    CommentsFetched(Arc<Mutex<Vec<Comment>>>),
-    ChangeCommentRemoveState(u64, bool),
-    CommentsSelectAll,
-    CommentsDeselectAll,
-    DeleteComment,
-    CommentDeleted { rpid: u64 },
-    ChannelConnected(Sender<ChannelMsg>),
-    AicuToggle(bool),
-    QRcodeGot(QRcode),
-    QRcodeRefresh,
-    QRcodeState((u64, Option<std::string::String>)),
-    EntertoCookieInput,
-    EntertoQRcodeScan,
-    SecondsInputChanged(String),
-    StopDeleteComment,
-    ResumeDeleteCommentFlag,
-    RefreshUI(()),
-}
-
-enum ChannelMsg {
-    DeleteComment(Arc<Client>, Arc<String>, Arc<Mutex<Vec<Comment>>>, f32),
-    StopDelete,
-    ResumeDeleteFlag,
-    StartRefreshQRcodeState,
-    StopRefreshQRcodeState,
 }
 
 impl Main {
@@ -364,14 +329,6 @@ impl Main {
                         spawn(async move {
                             sender.send(ChannelMsg::StopDelete).await.unwrap();
                         });
-                        self.delete_state = false;
-                    }
-                    Message::ResumeDeleteCommentFlag => {
-                        let sender = self.sender.as_ref().unwrap().clone();
-                        spawn(async move {
-                            sender.send(ChannelMsg::ResumeDeleteFlag).await.unwrap();
-                        });
-                        self.delete_state = true;
                     }
                     _ => {}
                 }
@@ -390,39 +347,52 @@ impl Main {
                     .unwrap();
                 let qrcode_refresh_flag = Arc::new(AtomicBool::new(false));
                 let delete_flag = Arc::new(AtomicBool::new(true));
+                let mut delete_task: Option<JoinHandle<()>> = None;
 
                 loop {
-                    match receiver.recv().await {
-                        Some(m) => match m {
-                            ChannelMsg::DeleteComment(cl, csrf, c, seconds) => {
-                                let c = c.lock().await;
-                                let comments = c
-                                    .iter()
-                                    .filter(|&e| e.remove_state)
-                                    .cloned()
-                                    .collect::<Vec<_>>();
-                                if comments.is_empty() {
-                                    continue;
-                                }
-                                let mut output_clone = output.clone();
-                                let delete_flag = Arc::clone(&delete_flag);
-                                spawn(async move {
-                                    let len = comments.len();
-                                    let pb = ProgressBar::new(len as u64);
-                                    pb.set_style(
-                                        indicatif::ProgressStyle::with_template(
-                                            "{wide_bar} {pos}/{len} {msg}",
-                                        )
-                                        .unwrap(),
-                                    );
-                                    for (index, comment) in comments.iter().enumerate() {
-                                        let delete_flag_value = delete_flag.load(Ordering::SeqCst);
-                                        if delete_flag_value {
+                    tokio::select! {
+                        // 处理消息接收
+                        msg = receiver.recv() => {
+                            match msg {
+                                Some(ChannelMsg::DeleteComment(cl, csrf, c, seconds)) => {
+                                    delete_flag.store(true, Ordering::SeqCst);
+                                    let comments = c.lock().await
+                                        .iter()
+                                        .filter(|e| e.remove_state)
+                                        .cloned()
+                                        .collect::<Vec<_>>();
+                                    if comments.is_empty() {
+                                        continue;
+                                    }
+
+                                    // 如果已有删除任务正在执行，检查任务是否完成
+                                    if let Some(handle) = delete_task.take() {
+                                        if !handle.is_finished() {
+                                            handle.abort();
+                                            info!("已有删除任务正在进行，已中止");
+                                        }
+                                    }
+
+                                    // 启动新的删除任务
+                                    let delete_flag_clone = Arc::clone(&delete_flag);
+                                    let mut output_clone = output.clone();
+                                    delete_task = Some(spawn(async move {
+                                        let len = comments.len();
+                                        let pb = ProgressBar::new(len as u64);
+                                        pb.set_style(
+                                            indicatif::ProgressStyle::with_template("{wide_bar} {pos}/{len} {msg}")
+                                            .unwrap(),
+                                        );
+
+                                        for (index, comment) in comments.iter().enumerate() {
+                                            if !delete_flag_clone.load(Ordering::SeqCst) {
+                                                info!("删除操作已中止");
+                                                break;
+                                            }
+
                                             let cl_clone = Arc::clone(&cl);
                                             let csrf_clone = Arc::clone(&csrf);
-                                            match remove_comment(cl_clone, csrf_clone, comment)
-                                                .await
-                                            {
+                                            match remove_comment(cl_clone, csrf_clone, comment).await {
                                                 Ok(rpid) => {
                                                     output_clone
                                                         .send(Message::CommentDeleted { rpid })
@@ -431,8 +401,8 @@ impl Main {
                                                     pb.set_message(format!("已删除评论：{}", rpid));
                                                     pb.inc(1);
                                                 }
-                                                Err(str) => {
-                                                    error!("{}", str);
+                                                Err(err) => {
+                                                    error!("{}", err);
                                                 }
                                             }
 
@@ -442,32 +412,36 @@ impl Main {
 
                                             sleep(Duration::from_secs_f32(seconds)).await;
                                         }
-                                    }
-                                });
+                                    }));
+                                }
+                                Some(ChannelMsg::StopDelete) => {
+                                    delete_flag.store(false, Ordering::SeqCst);
+                                    info!("停止删除评论");
+                                }
+                                Some(ChannelMsg::StartRefreshQRcodeState) => {
+                                    qrcode_refresh_flag.store(true, Ordering::SeqCst);
+                                    let qrcode_refresh_flag_clone = Arc::clone(&qrcode_refresh_flag);
+                                    let mut output_clone = output.clone();
+                                    spawn(async move {
+                                        while qrcode_refresh_flag_clone.load(Ordering::SeqCst) {
+                                            output_clone.send(Message::QRcodeRefresh).await.unwrap();
+                                            sleep(Duration::from_secs(1)).await;
+                                        }
+                                    });
+                                }
+                                Some(ChannelMsg::StopRefreshQRcodeState) => {
+                                    qrcode_refresh_flag.store(false, Ordering::SeqCst);
+                                }
+                                None => error!("Channel接收错误"),
                             }
-                            ChannelMsg::StopDelete => {
-                                delete_flag.store(false, Ordering::SeqCst);
-                                info!("已停止");
+                        }
+
+                        // 在删除任务完成后继续处理消息
+                        else => {
+                            if let Some(handle) = delete_task.take() {
+                                let _ = handle.await;
                             }
-                            ChannelMsg::ResumeDeleteFlag => {
-                                delete_flag.store(true, Ordering::SeqCst);
-                            }
-                            ChannelMsg::StartRefreshQRcodeState => {
-                                qrcode_refresh_flag.store(true, Ordering::SeqCst);
-                                let qrcode_refresh_flag_clone = Arc::clone(&qrcode_refresh_flag);
-                                let mut output_clone = output.clone();
-                                spawn(async move {
-                                    while qrcode_refresh_flag_clone.load(Ordering::SeqCst) {
-                                        output_clone.send(Message::QRcodeRefresh).await.unwrap();
-                                        sleep(Duration::from_secs(1)).await;
-                                    }
-                                });
-                            }
-                            ChannelMsg::StopRefreshQRcodeState => {
-                                qrcode_refresh_flag.store(false, Ordering::SeqCst);
-                            }
-                        },
-                        None => error!("Channel接收错误"),
+                        }
                     }
                 }
             })
@@ -480,137 +454,14 @@ impl Main {
                 ref qr_data,
                 ref qr_code_state,
                 ..
-            } => {
-                if let Some(v) = qr_data {
-                    let mut cl = column![qr_code(v)];
-                    if let Some(c) = qr_code_state {
-                        let resmsg = match c {
-                            0 => "扫码登录成功".to_string(),
-                            86038 => "二维码已失效".to_string(),
-                            86090 => "已扫码，未确认".to_string(),
-                            86101 => "未扫码".to_string(),
-                            _ => format!("未知代码：{}", c),
-                        };
-                        cl = cl
-                            .push(text(resmsg).shaping(text::Shaping::Advanced))
-                            .push(
-                                toggler(self.aicu_state)
-                                    .on_toggle(Message::AicuToggle)
-                                    .label("Also fetch comments from aicu.cc"),
-                            )
-                            .push(row![
-                                Space::with_width(Length::Fill),
-                                button("Change to input cookie")
-                                    .on_press(Message::EntertoCookieInput)
-                            ]);
-                    }
-                    center(cl.spacing(10).align_x(Alignment::Center)).into()
-                } else {
-                    center("QRCode is loading...").into()
-                }
-            }
-            State::WaitingForInputCookie => center(
-                column![
-                    row![
-                        text_input("Input cookie here", &self.cookie)
-                            .on_input(Message::CookieInputChanged)
-                            .on_submit(Message::CookieSubmited(self.cookie.to_owned())),
-                        button("enter").on_press(Message::CookieSubmited(self.cookie.to_owned())),
-                    ]
-                    .spacing(5),
-                    toggler(self.aicu_state)
-                        .on_toggle(Message::AicuToggle)
-                        .label("Also fetch comments from aicu.cc"),
-                    row![
-                        Space::with_width(Length::Fill),
-                        button("Change to scan QR code").on_press(Message::EntertoQRcodeScan)
-                    ]
-                ]
-                .spacing(5),
-            )
-            .padding(20)
-            .into(),
-            State::LoginSuccess => center(
-                column![
-                    image(image::Handle::from_bytes(SOYO0)).height(Length::FillPortion(2)),
-                    text("Fetching").height(Length::FillPortion(1))
-                ]
-                .padding(20)
-                .spacing(10)
-                .align_x(Alignment::Center),
-            )
-            .into(),
+            } => qrcode_page::view(qr_data, qr_code_state, self.aicu_state),
+            State::WaitingForInputCookie => cookie_page::view(&self.cookie, self.aicu_state),
+            State::LoginSuccess => fetching_page::view(SOYO0),
             State::CommentsFetched => {
-                if let Some(comments) = &self.comments {
-                    let head = text(format!(
-                        "There are currently {} comments",
-                        comments.blocking_lock().len()
-                    ));
-                    let a = comments.blocking_lock();
-                    let cl = column(a.iter().cloned().map(|i| {
-                        checkbox(i.content, i.remove_state)
-                            .text_shaping(iced::widget::text::Shaping::Advanced)
-                            .on_toggle(move |b| Message::ChangeCommentRemoveState(i.rpid, b))
-                            .into()
-                    }))
-                    .padding([0, 15]);
-                    let comments = center(scrollable(cl).height(Length::Fill));
-
-                    let controls = row![
-                        if self.select_state {
-                            button("select all").on_press(Message::CommentsSelectAll)
-                        } else {
-                            button("deselect all").on_press(Message::CommentsDeselectAll)
-                        },
-                        Space::with_width(Length::Fill),
-                        if self.delete_state {
-                            button("stop").on_press(Message::StopDeleteComment)
-                        } else {
-                            button("resume").on_press(Message::ResumeDeleteCommentFlag)
-                        },
-                        Space::with_width(Length::Fill),
-                        row![
-                            text_input("sleep seconds", &self.sleep_seconds.to_string())
-                                .on_input(Message::SecondsInputChanged)
-                                .on_submit(Message::DeleteComment),
-                            text("s"),
-                            button("remove").on_press_maybe(if self.delete_state {
-                                Some(Message::DeleteComment)
-                            } else {
-                                None
-                            })
-                        ]
-                        .spacing(5)
-                        .align_y(Alignment::Center)
-                    ]
-                    .height(Length::Shrink)
-                    .padding([0, 15]);
-                    center(
-                        column![head, comments, controls]
-                            .spacing(10)
-                            .align_x(Alignment::Center),
-                    )
-                    .padding([5, 20])
-                    .into()
-                } else {
-                    center(text("任何邪恶，终将绳之以法😭").shaping(text::Shaping::Advanced)).into()
-                }
+                fetched_page::view(&self.comments, self.select_state, &self.sleep_seconds)
             }
         }
     }
-}
-
-#[derive(Debug, Default, Clone)]
-
-struct Comment {
-    oid: u64,
-    r#type: u8,
-    rpid: u64,
-    content: String,
-    remove_state: bool,
-    notify_id: Option<u64>,
-    /// 删除通知用 0为收到赞的 1为收到评论的 2为被At的
-    tp: Option<u8>,
 }
 
 async fn create_client(ck: String) -> Message {
@@ -1027,60 +878,6 @@ https://api.bilibili.com/x/msgfeed/del",
         info!("remove notify {id} success");
     } else {
         error!("Can't remove notify. Response json: {}", json_res);
-    }
-}
-#[derive(Debug, Clone)]
-struct QRcode {
-    url: String,
-    key: String,
-}
-impl QRcode {
-    async fn request_qrcode() -> QRcode {
-        let a = get_json(
-            Arc::new(Client::new()),
-            "https://passport.bilibili.com/x/passport-login/web/qrcode/generate",
-        )
-        .await;
-        QRcode {
-            url: a["data"]["url"].as_str().unwrap().to_string(),
-            key: a["data"]["qrcode_key"].as_str().unwrap().to_string(),
-        }
-    }
-    async fn get_state(&self, cl: Arc<Client>) -> (u64, Option<String>) {
-        let url = format!(
-            "https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={}",
-            &self.key
-        );
-        let res = get_json(cl, &url).await;
-        let res_code = res["data"]["code"].as_u64().unwrap();
-        if res_code == 0 {
-            let res_url = res["data"]["url"].as_str().unwrap();
-            let a = res_url.find("bili_jct=").expect("Can't find csrf data.");
-            let b = res_url[a..].find("&").unwrap();
-            let csrf = res_url[a + 9..b + a].to_string();
-            return (res_code, Some(csrf));
-        }
-        (res_code, None)
-    }
-}
-
-async fn get_json<T: IntoUrl>(cl: Arc<Client>, url: T) -> Value {
-    let res = serde_json::from_str::<Value>(
-        cl.get(url)
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap()
-            .as_str(),
-    )
-    .unwrap();
-    // dbg!(&res);
-    if res["code"] != 0 {
-        panic!("Can't get request, Json response: {}", res);
-    } else {
-        res
     }
 }
 
