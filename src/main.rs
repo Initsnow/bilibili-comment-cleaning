@@ -299,11 +299,7 @@ impl Main {
                         let sender = self.sender.as_ref().unwrap().clone();
                         let cl = Arc::clone(&self.client);
                         let csrf = Arc::clone(self.csrf.as_ref().unwrap());
-                        let seconds = if let Ok(v) = self.sleep_seconds.parse::<f32>() {
-                            v
-                        } else {
-                            0.0
-                        };
+                        let seconds = self.sleep_seconds.parse::<f32>().unwrap_or(0.0);
                         let comments = Arc::clone(self.comments.as_ref().unwrap());
                         spawn(async move {
                             sender

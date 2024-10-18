@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 pub fn view<'a>(
     comments: &Option<Arc<Mutex<Vec<Comment>>>>,
     select_state: bool,
-    sleep_seconds: &String,
+    sleep_seconds: &str,
 ) -> Element<'a, Message> {
     if let Some(comments) = comments {
         let head = text(format!(
