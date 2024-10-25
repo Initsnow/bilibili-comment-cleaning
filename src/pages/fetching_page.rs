@@ -1,6 +1,6 @@
 use crate::types::Message;
 use iced::{
-    widget::{center, column, horizontal_rule, image, progress_bar, text},
+    widget::{center, column, horizontal_rule, image, progress_bar, row, text},
     Alignment, Element, Length,
 };
 
@@ -14,9 +14,17 @@ pub fn view<'a>(
             image(image::Handle::from_bytes(img)).height(Length::FillPortion(2)),
             text("Fetching").height(Length::FillPortion(1))
         ]
-        .push_maybe(
-            aicu_progress.map(|e| column!["Fetching from aicu.cc:", progress_bar(0.0..=e.1, e.0),]),
-        )
+        .push_maybe(aicu_progress.map(|e| {
+            column![
+                "Fetching from aicu.cc:",
+                row![
+                    progress_bar(0.0..=e.1, e.0),
+                    text(format!("({}/{})", e.0, e.1))
+                ]
+                .spacing(5)
+                .align_y(Alignment::Center)
+            ]
+        }))
         .push_maybe(offcial_msg.clone().map(|e| {
             column![
                 horizontal_rule(0.5),

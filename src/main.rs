@@ -68,6 +68,7 @@ struct Main {
     aicu_state: bool,
     sender: Option<Sender<ChannelMsg>>,
     sleep_seconds: String,
+    is_deleting: bool,
 }
 impl Default for Main {
     fn default() -> Self {
@@ -85,6 +86,7 @@ impl Default for Main {
             aicu_state: true,
             sender: None,
             sleep_seconds: String::default(),
+            is_deleting:false,
         }
     }
 }
@@ -315,6 +317,7 @@ impl Main {
                         let csrf = Arc::clone(self.csrf.as_ref().unwrap());
                         let seconds = self.sleep_seconds.parse::<f32>().unwrap_or(0.0);
                         let comments = Arc::clone(self.comments.as_ref().unwrap());
+                        self.is_deleting = true;
                         spawn(async move {
                             sender
                                 .send(ChannelMsg::DeleteComment(cl, csrf, comments, seconds))
@@ -340,6 +343,9 @@ impl Main {
                             sender.send(ChannelMsg::StopDelete).await.unwrap();
                         });
                     }
+                    Message::AllCommentDeleted => {
+                        self.is_deleting = false;
+                    }
                     _ => {}
                 }
                 Task::none()
@@ -360,98 +366,104 @@ impl Main {
                 let mut delete_task: Option<JoinHandle<()>> = None;
 
                 loop {
-                    tokio::select! {
-                        // 处理消息接收
-                        msg = receiver.recv() => {
-                            match msg {
-                                Some(ChannelMsg::DeleteComment(cl, csrf, c, seconds)) => {
-                                    delete_flag.store(true, Ordering::SeqCst);
-                                    let comments = c.lock().await
-                                        .iter()
-                                        .filter(|e| e.remove_state)
-                                        .cloned()
-                                        .collect::<Vec<_>>();
-                                    if comments.is_empty() {
-                                        continue;
+                    // 处理消息接收
+                    if let Some(msg) = receiver.recv().await {
+                        match msg {
+                            ChannelMsg::DeleteComment(cl, csrf, c, seconds) => {
+                                delete_flag.store(true, Ordering::SeqCst);
+
+                                let comments = c
+                                    .lock()
+                                    .await
+                                    .iter()
+                                    .filter(|e| e.remove_state)
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+
+                                if comments.is_empty() {
+                                    continue;
+                                }
+
+                                // 如果已有删除任务正在执行，检查任务是否完成
+                                if let Some(handle) = delete_task.take() {
+                                    if !handle.is_finished() {
+                                        handle.abort();
+                                        info!("已有删除任务正在进行，已中止");
                                     }
+                                }
 
-                                    // 如果已有删除任务正在执行，检查任务是否完成
-                                    if let Some(handle) = delete_task.take() {
-                                        if !handle.is_finished() {
-                                            handle.abort();
-                                            info!("已有删除任务正在进行，已中止");
+                                // 启动新的删除任务
+                                let delete_flag_clone = Arc::clone(&delete_flag);
+                                let mut output_clone = output.clone();
+                                delete_task = Some(spawn(async move {
+                                    let len = comments.len();
+                                    let pb = ProgressBar::new(len as u64);
+                                    pb.set_style(
+                                        indicatif::ProgressStyle::with_template(
+                                            "{wide_bar} {pos}/{len} {msg}",
+                                        )
+                                        .unwrap(),
+                                    );
+
+                                    for (index, comment) in comments.iter().enumerate() {
+                                        if !delete_flag_clone.load(Ordering::SeqCst) {
+                                            output_clone
+                                                .send(Message::AllCommentDeleted)
+                                                .await
+                                                .unwrap();
+                                            info!("删除操作已中止");
+                                            break;
                                         }
+
+                                        let cl_clone = Arc::clone(&cl);
+                                        let csrf_clone = Arc::clone(&csrf);
+                                        match remove_comment(cl_clone, csrf_clone, comment).await {
+                                            Ok(rpid) => {
+                                                output_clone
+                                                    .send(Message::CommentDeleted { rpid })
+                                                    .await
+                                                    .unwrap();
+                                                pb.set_message(format!("已删除评论：{}", rpid));
+                                                pb.inc(1);
+                                            }
+                                            Err(err) => {
+                                                error!("{}", err);
+                                            }
+                                        }
+
+                                        if index + 1 == len {
+                                            output_clone
+                                                .send(Message::AllCommentDeleted)
+                                                .await
+                                                .unwrap();
+                                            pb.finish_with_message("删除完成");
+                                        }
+
+                                        sleep(Duration::from_secs_f32(seconds)).await;
                                     }
-
-                                    // 启动新的删除任务
-                                    let delete_flag_clone = Arc::clone(&delete_flag);
-                                    let mut output_clone = output.clone();
-                                    delete_task = Some(spawn(async move {
-                                        let len = comments.len();
-                                        let pb = ProgressBar::new(len as u64);
-                                        pb.set_style(
-                                            indicatif::ProgressStyle::with_template("{wide_bar} {pos}/{len} {msg}")
-                                            .unwrap(),
-                                        );
-
-                                        for (index, comment) in comments.iter().enumerate() {
-                                            if !delete_flag_clone.load(Ordering::SeqCst) {
-                                                info!("删除操作已中止");
-                                                break;
-                                            }
-
-                                            let cl_clone = Arc::clone(&cl);
-                                            let csrf_clone = Arc::clone(&csrf);
-                                            match remove_comment(cl_clone, csrf_clone, comment).await {
-                                                Ok(rpid) => {
-                                                    output_clone
-                                                        .send(Message::CommentDeleted { rpid })
-                                                        .await
-                                                        .unwrap();
-                                                    pb.set_message(format!("已删除评论：{}", rpid));
-                                                    pb.inc(1);
-                                                }
-                                                Err(err) => {
-                                                    error!("{}", err);
-                                                }
-                                            }
-
-                                            if index + 1 == len {
-                                                pb.finish_with_message("删除完成");
-                                            }
-
-                                            sleep(Duration::from_secs_f32(seconds)).await;
-                                        }
-                                    }));
-                                }
-                                Some(ChannelMsg::StopDelete) => {
-                                    delete_flag.store(false, Ordering::SeqCst);
-                                    info!("停止删除评论");
-                                }
-                                Some(ChannelMsg::StartRefreshQRcodeState) => {
-                                    qrcode_refresh_flag.store(true, Ordering::SeqCst);
-                                    let qrcode_refresh_flag_clone = Arc::clone(&qrcode_refresh_flag);
-                                    let mut output_clone = output.clone();
-                                    spawn(async move {
-                                        while qrcode_refresh_flag_clone.load(Ordering::SeqCst) {
-                                            output_clone.send(Message::QRcodeRefresh).await.unwrap();
-                                            sleep(Duration::from_secs(1)).await;
-                                        }
-                                    });
-                                }
-                                Some(ChannelMsg::StopRefreshQRcodeState) => {
-                                    qrcode_refresh_flag.store(false, Ordering::SeqCst);
-                                }
-                                None => error!("Channel接收错误"),
+                                }));
+                            }
+                            ChannelMsg::StopDelete => {
+                                delete_flag.store(false, Ordering::SeqCst);
+                                info!("停止删除评论");
+                            }
+                            ChannelMsg::StartRefreshQRcodeState => {
+                                qrcode_refresh_flag.store(true, Ordering::SeqCst);
+                                let qrcode_refresh_flag_clone = Arc::clone(&qrcode_refresh_flag);
+                                let mut output_clone = output.clone();
+                                spawn(async move {
+                                    while qrcode_refresh_flag_clone.load(Ordering::SeqCst) {
+                                        output_clone.send(Message::QRcodeRefresh).await.unwrap();
+                                        sleep(Duration::from_secs(1)).await;
+                                    }
+                                });
+                            }
+                            ChannelMsg::StopRefreshQRcodeState => {
+                                qrcode_refresh_flag.store(false, Ordering::SeqCst);
                             }
                         }
-
-                        // 在删除任务完成后继续处理消息
-                        else => {
-                            if let Some(handle) = delete_task.take() {
-                                let _ = handle.await;
-                            }
-                        }
+                    } else {
+                        panic!("Channel is closed");
                     }
                 }
             })
@@ -470,9 +482,12 @@ impl Main {
                 offcial_msg,
                 aicu_progress,
             } => fetching_page::view(SOYO0, aicu_progress, offcial_msg),
-            State::CommentsFetched => {
-                fetched_page::view(&self.comments, self.select_state, &self.sleep_seconds)
-            }
+            State::CommentsFetched => fetched_page::view(
+                &self.comments,
+                self.select_state,
+                &self.sleep_seconds,
+                self.is_deleting,
+            ),
         }
     }
 }
@@ -827,7 +842,7 @@ fn fetch_comment_from_aicu(cl: Arc<Client>) -> impl Stream<Item = types::Message
         output
             .send(Message::AicuFetchingState {
                 now: count,
-                max: max,
+                max,
             })
             .await
             .unwrap();
@@ -858,7 +873,7 @@ fn fetch_comment_from_aicu(cl: Arc<Client>) -> impl Stream<Item = types::Message
                 output
                     .send(Message::AicuFetchingState {
                         now: count,
-                        max: max,
+                        max,
                     })
                     .await
                     .unwrap();

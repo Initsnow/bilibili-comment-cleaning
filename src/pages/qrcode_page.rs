@@ -31,7 +31,9 @@ pub fn view<'a>(
                     button("Change to input cookie").on_press(Message::EntertoCookieInput)
                 ]);
         }
-        center(cl.spacing(10).align_x(Alignment::Center)).into()
+        center(cl.spacing(10).align_x(Alignment::Center))
+            .padding(20)
+            .into()
     } else {
         center("QRCode is loading...").into()
     }

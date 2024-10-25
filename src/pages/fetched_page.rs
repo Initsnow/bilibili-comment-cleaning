@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use crate::types::{Comment, Message};
 use iced::{
-    widget::{button, center, checkbox, column, row, scrollable, text, text_input, Space},
+    widget::{
+        button, center, checkbox, column, row, scrollable, text, text_input, tooltip, Space,
+    },
     Alignment, Element, Length,
 };
 use tokio::sync::Mutex;
@@ -11,6 +13,7 @@ pub fn view<'a>(
     comments: &Option<Arc<Mutex<Vec<Comment>>>>,
     select_state: bool,
     sleep_seconds: &str,
+    is_deleting: bool,
 ) -> Element<'a, Message> {
     if let Some(comments) = comments {
         let head = text(format!(
@@ -34,24 +37,32 @@ pub fn view<'a>(
                 button("deselect all").on_press(Message::CommentsDeselectAll)
             },
             Space::with_width(Length::Fill),
-            button("stop").on_press(Message::StopDeleteComment),
-            Space::with_width(Length::Fill),
             row![
-                text_input("sleep seconds", sleep_seconds)
-                    .on_input(Message::SecondsInputChanged)
-                    .on_submit(Message::DeleteComment),
+                tooltip(
+                    text_input("0", sleep_seconds)
+                        .align_x(Alignment::Center)
+                        .on_input(Message::SecondsInputChanged)
+                        .on_submit(Message::DeleteComment)
+                        .width(Length::Fixed(33.0)),
+                    "Sleep seconds",
+                    tooltip::Position::FollowCursor
+                ),
                 text("s"),
-                button("remove").on_press(Message::DeleteComment)
+                if is_deleting {
+                    button("stop").on_press(Message::StopDeleteComment)
+                } else {
+                    button("remove").on_press(Message::DeleteComment)
+                }
             ]
             .spacing(5)
             .align_y(Alignment::Center)
         ]
-        .height(Length::Shrink)
-        .padding([0, 15]);
+        // let log=;
+        .height(Length::Shrink);
         center(
-            column![head, comments, controls]
-                .spacing(10)
-                .align_x(Alignment::Center),
+            column![head, comments.width(Length::FillPortion(3)), controls]
+                .align_x(Alignment::Center)
+                .spacing(10),
         )
         .padding([5, 20])
         .into()

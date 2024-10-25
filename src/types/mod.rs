@@ -26,6 +26,7 @@ pub enum Message {
     StopDeleteComment,
     AicuFetchingState { now: f32, max: f32 },
     OfficialFetchingState(String),
+    AllCommentDeleted,
     RefreshUI(()),
 }
 
