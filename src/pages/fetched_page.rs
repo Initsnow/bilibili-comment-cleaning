@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use crate::types::{Comment, Message};
 use iced::{
-    widget::{
-        button, center, checkbox, column, row, scrollable, text, text_input, tooltip, Space,
-    },
+    widget::{button, center, checkbox, column, row, scrollable, text, text_input, tooltip, Space},
     Alignment, Element, Length,
 };
 use tokio::sync::Mutex;

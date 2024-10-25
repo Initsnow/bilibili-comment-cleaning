@@ -1,4 +1,11 @@
-use bilibili_comment_cleaning::get_json;
+use bilibili_comment_cleaning::{
+    get_json,
+    notify::{
+        fetch_remove_ated_notify, fetch_remove_liked_notify, fetch_remove_replyed_notify,
+        fetch_remove_system_notify, remove_notify,
+    },
+};
+use clap::{arg, command, Parser, Subcommand};
 use iced::{
     futures::{SinkExt, Stream, StreamExt},
     stream,
@@ -34,17 +41,69 @@ use types::{ChannelMsg, Comment, Message, QRcode};
 static SOYO0: &[u8] = include_bytes!("assets/soyo0.png");
 static TAFFY: &[u8] = include_bytes!("assets/taffy.png");
 
+#[derive(Parser, Debug)]
+#[command(author,version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// 删除通知
+    RemoveNotify {
+        cookie: String,
+        /// 被点赞的评论通知
+        #[arg(short, long)]
+        liked_notify: bool,
+        /// 被评论的评论通知
+        #[arg(short, long)]
+        replyed_notify: bool,
+        /// 被At的评论通知
+        #[arg(short, long)]
+        ated_notify: bool,
+        /// 系统通知
+        #[arg(short, long)]
+        system_notify: bool,
+    },
+}
+
 fn main() -> iced::Result {
     tracing_subscriber::fmt::init();
 
-    {
-        let args: Vec<String> = std::env::args().collect();
-        if args.len() == 3 && args[1] == "--remove_notifys" {
-            let cookie = args[2].clone();
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(fetch_remove_notifys(cookie));
+    let cli = Cli::parse();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async move {
+        if let Some(Commands::RemoveNotify {
+            cookie,
+            liked_notify,
+            replyed_notify,
+            ated_notify,
+            system_notify,
+        }) = cli.command
+        {
+            if !liked_notify & !replyed_notify & !ated_notify & !system_notify {
+                info!("There's nothing to do...");
+                std::process::exit(0);
+            }
+            let (cl, csrf) = create_client(cookie).await;
+            let cl = Arc::new(cl);
+            let csrf = Arc::new(csrf);
+
+            if liked_notify {
+                fetch_remove_liked_notify(cl.clone(), csrf.clone()).await;
+            }
+            if replyed_notify {
+                fetch_remove_replyed_notify(cl.clone(), csrf.clone()).await;
+            }
+            if ated_notify {
+                fetch_remove_ated_notify(cl.clone(), csrf.clone()).await;
+            }
+            if system_notify {
+                fetch_remove_system_notify(cl.clone(), csrf.clone()).await;
+            }
+            std::process::exit(0);
         }
-    }
+    });
 
     let icon = iced::window::icon::from_file_data(TAFFY, None).unwrap();
     iced::application("BilibiliCommentCleaning", Main::update, Main::view)
@@ -202,7 +261,10 @@ impl Main {
             State::WaitingForInputCookie => {
                 match msg {
                     Message::CookieSubmited(s) => {
-                        return Task::perform(create_client(s), move |m| m);
+                        return Task::perform(create_client(s), move |e| Message::ClientCreated {
+                            client: e.0,
+                            csrf: e.1,
+                        });
                     }
                     Message::CookieInputChanged(s) => {
                         self.cookie = s;
@@ -492,7 +554,7 @@ impl Main {
     }
 }
 
-async fn create_client(ck: String) -> Message {
+async fn create_client(ck: String) -> (Client, String) {
     let a = ck
         .find("bili_jct=")
         .expect("Can't find csrf data.Make sure that your cookie data has a bili_jct field.");
@@ -508,10 +570,7 @@ async fn create_client(ck: String) -> Message {
         .build()
         .unwrap();
 
-    Message::ClientCreated {
-        client: cl,
-        csrf: csrf.to_string(),
-    }
+    (cl, csrf.to_string())
 }
 
 enum MsgType {
@@ -819,6 +878,7 @@ async fn get_uid(cl: Arc<Client>) -> u64 {
         .as_u64()
         .expect("Can't get uid. Please check your cookie data")
 }
+
 fn fetch_comment_from_aicu(cl: Arc<Client>) -> impl Stream<Item = types::Message> {
     stream::channel(10, |mut output| async move {
         let uid = get_uid(Arc::clone(&cl)).await;
@@ -840,10 +900,7 @@ fn fetch_comment_from_aicu(cl: Arc<Client>) -> impl Stream<Item = types::Message
         let max = total_replies as f32;
         let mut count = 0.0;
         output
-            .send(Message::AicuFetchingState {
-                now: count,
-                max,
-            })
+            .send(Message::AicuFetchingState { now: count, max })
             .await
             .unwrap();
         println!("正在从aicu.cc获取数据...");
@@ -871,10 +928,7 @@ fn fetch_comment_from_aicu(cl: Arc<Client>) -> impl Stream<Item = types::Message
                 pb.inc(1);
                 count += 1.0;
                 output
-                    .send(Message::AicuFetchingState {
-                        now: count,
-                        max,
-                    })
+                    .send(Message::AicuFetchingState { now: count, max })
                     .await
                     .unwrap();
             }
@@ -927,189 +981,4 @@ fn fetch_comment_both(cl: Arc<Client>) -> impl Stream<Item = Message> {
             .await
             .unwrap();
     })
-}
-
-async fn remove_notify(cl: Arc<Client>, id: u64, csrf: Arc<String>, tp: String) {
-    let res = cl
-        .post(
-            "
-https://api.bilibili.com/x/msgfeed/del",
-        )
-        .form(&[
-            ("tp", tp),
-            ("id", id.to_string()),
-            ("build", 0.to_string()),
-            ("mobi_app", "web".to_string()),
-            ("csrf_token", csrf.to_string()),
-            ("csrf", csrf.to_string()),
-        ])
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    let json_res: serde_json::Value = serde_json::from_str(res.as_str()).unwrap();
-    if json_res["code"].as_i64().unwrap() == 0 {
-        info!("remove notify {id} success");
-    } else {
-        error!("Can't remove notify. Response json: {}", json_res);
-    }
-}
-
-async fn fetch_remove_notifys(ck: String) {
-    if let Message::ClientCreated { client: cl, csrf } = create_client(ck).await {
-        let mut v: Vec<(u64, u8)> = Vec::new();
-        let mut msgtype = MsgType::Like;
-        let mut queryid = None;
-        let mut last_time = None;
-        loop {
-            let json: serde_json::Value;
-            let notifys: &serde_json::Value;
-            if queryid.is_none() && last_time.is_none() {
-                // 第一次请求
-                let first = cl
-                    .get(
-                        Url::parse(
-                            match msgtype {
-                                MsgType::Like=>"https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
-                                MsgType::Reply=>"https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web",
-                                MsgType::At=>"https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web"
-                            }
-                        )
-                        .unwrap(),
-                    )
-                    .send()
-                    .await
-                    .expect("Can't get first request");
-                json = serde_json::from_str(&first.text().await.unwrap()).unwrap();
-                match msgtype {
-                    MsgType::Like => {
-                        notifys = &json["data"]["total"]["items"];
-                        if notifys.as_array().unwrap().is_empty() {
-                            msgtype = MsgType::Reply;
-                            info!("没有收到赞的通知。");
-                            continue;
-                        }
-                        last_time =
-                            notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
-                        queryid = json["data"]["total"]["cursor"]["id"].as_u64();
-                    }
-                    MsgType::Reply => {
-                        notifys = &json["data"]["items"];
-                        if notifys.as_array().unwrap().is_empty() {
-                            msgtype = MsgType::At;
-                            info!("没有收到评论的通知。");
-                            continue;
-                        }
-                        last_time =
-                            notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
-                        queryid = json["data"]["cursor"]["id"].as_u64();
-                    }
-                    MsgType::At => {
-                        notifys = &json["data"]["items"];
-                        if notifys.as_array().unwrap().is_empty() {
-                            info!("没有被At的通知。");
-                            break;
-                        }
-                        last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
-                        queryid = json["data"]["cursor"]["id"].as_u64();
-                    }
-                }
-            } else {
-                let mut url = Url::parse(match msgtype {
-                    MsgType::Like => {
-                        "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
-                    }
-                    MsgType::Reply => {
-                        "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
-                    }
-                    MsgType::At => "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
-                })
-                .unwrap();
-                match msgtype {
-                    MsgType::Like => {
-                        url.query_pairs_mut()
-                            .append_pair("id", &queryid.unwrap().to_string())
-                            .append_pair("like_time", &last_time.unwrap().to_string());
-                        let other = cl.get(url).send().await.expect("Can't get request");
-                        json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
-                        notifys = &json["data"]["total"]["items"];
-                        last_time =
-                            notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
-                        queryid = json["data"]["total"]["cursor"]["id"].as_u64();
-                    }
-                    MsgType::Reply => {
-                        url.query_pairs_mut()
-                            .append_pair("id", &queryid.unwrap().to_string())
-                            .append_pair("reply_time", &last_time.unwrap().to_string());
-                        let other = cl.get(url).send().await.expect("Can't get request");
-                        json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
-                        notifys = &json["data"]["items"];
-                        last_time =
-                            notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
-                        queryid = json["data"]["cursor"]["id"].as_u64();
-                    }
-                    MsgType::At => {
-                        url.query_pairs_mut()
-                            .append_pair("id", &queryid.unwrap().to_string())
-                            .append_pair("at_time", &last_time.unwrap().to_string());
-                        let other = cl.get(url).send().await.expect("Can't get request");
-                        json = serde_json::from_str(&other.text().await.unwrap()).unwrap();
-                        notifys = &json["data"]["items"];
-                        last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
-                        queryid = json["data"]["cursor"]["id"].as_u64();
-                    }
-                }
-            }
-            dbg!(queryid, last_time);
-            for i in notifys.as_array().unwrap() {
-                let notify_id = i["id"].as_u64().unwrap();
-                v.push((
-                    notify_id,
-                    match msgtype {
-                        MsgType::Like => 0,
-                        MsgType::Reply => 1,
-                        MsgType::At => 2,
-                    },
-                ));
-                info!("Fetched notify {notify_id}");
-            }
-            //push完检测是否为end
-            match msgtype {
-                MsgType::Like => {
-                    if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() {
-                        msgtype = MsgType::Reply;
-                        last_time = None;
-                        queryid = None;
-                        info!("收到赞的通知处理完毕。");
-                    }
-                }
-                MsgType::Reply => {
-                    if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
-                        msgtype = MsgType::At;
-                        last_time = None;
-                        queryid = None;
-                        info!("收到评论的通知处理完毕。");
-                        continue;
-                    }
-                }
-                MsgType::At => {
-                    if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
-                        info!("被At的通知处理完毕。");
-                        break;
-                    }
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        info!("当前待处理通知数量: {}", v.len());
-        let cl = Arc::new(cl);
-        let csrf = Arc::new(csrf);
-        for i in v {
-            remove_notify(Arc::clone(&cl), i.0, Arc::clone(&csrf), i.1.to_string()).await;
-            tokio::time::sleep(Duration::from_millis(300)).await;
-        }
-        std::process::exit(0);
-    }
 }
