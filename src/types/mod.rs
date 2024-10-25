@@ -24,6 +24,8 @@ pub enum Message {
     EntertoQRcodeScan,
     SecondsInputChanged(String),
     StopDeleteComment,
+    AicuFetchingState { now: f32, max: f32 },
+    OfficialFetchingState(String),
     RefreshUI(()),
 }
 

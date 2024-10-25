@@ -1,5 +1,10 @@
 use bilibili_comment_cleaning::get_json;
-use iced::{futures::SinkExt, stream, widget::qr_code, Element, Subscription, Task};
+use iced::{
+    futures::{SinkExt, Stream, StreamExt},
+    stream,
+    widget::qr_code,
+    Element, Subscription, Task,
+};
 use indicatif::ProgressBar;
 use regex::Regex;
 use reqwest::{header, Client, Url};
@@ -92,7 +97,10 @@ enum State {
         qr_code_state: Option<u64>,
     },
     WaitingForInputCookie,
-    LoginSuccess,
+    LoginSuccess {
+        aicu_progress: Option<(f32, f32)>,
+        offcial_msg: Option<String>,
+    },
     CommentsFetched,
 }
 
@@ -162,19 +170,16 @@ impl Main {
                         }
                         if v.0 == 0 {
                             self.csrf = Some(Arc::new(v.1.unwrap()));
-                            self.state = State::LoginSuccess;
+                            self.state = State::LoginSuccess {
+                                aicu_progress: None,
+                                offcial_msg: None,
+                            };
                             let sender_clone = self.sender.as_ref().unwrap().clone();
                             return Task::batch([
                                 if self.aicu_state {
-                                    Task::perform(
-                                        fetch_comment_both(Arc::clone(&self.client)),
-                                        Message::CommentsFetched,
-                                    )
+                                    Task::stream(fetch_comment_both(Arc::clone(&self.client)))
                                 } else {
-                                    Task::perform(
-                                        fetch_comment(Arc::clone(&self.client)),
-                                        Message::CommentsFetched,
-                                    )
+                                    Task::stream(fetch_comment(Arc::clone(&self.client)))
                                 },
                                 Task::perform(
                                     async move {
@@ -203,15 +208,14 @@ impl Main {
                     Message::ClientCreated { client, csrf } => {
                         self.client = Arc::new(client);
                         self.csrf = Some(Arc::new(csrf));
-                        self.state = State::LoginSuccess;
+                        self.state = State::LoginSuccess {
+                            aicu_progress: None,
+                            offcial_msg: None,
+                        };
                         let sender_clone = self.sender.as_ref().unwrap().clone();
-
                         if self.aicu_state {
                             return Task::batch([
-                                Task::perform(
-                                    fetch_comment_both(Arc::clone(&self.client)),
-                                    Message::CommentsFetched,
-                                ),
+                                Task::stream(fetch_comment_both(Arc::clone(&self.client))),
                                 Task::perform(
                                     async move {
                                         sender_clone.send(ChannelMsg::StopRefreshQRcodeState).await
@@ -221,10 +225,7 @@ impl Main {
                             ]);
                         }
                         return Task::batch([
-                            Task::perform(
-                                fetch_comment(Arc::clone(&self.client)),
-                                Message::CommentsFetched,
-                            ),
+                            Task::stream(fetch_comment(Arc::clone(&self.client))),
                             Task::perform(
                                 async move {
                                     sender_clone.send(ChannelMsg::StopRefreshQRcodeState).await
@@ -249,11 +250,24 @@ impl Main {
                 Task::none()
             }
 
-            State::LoginSuccess => {
-                if let Message::CommentsFetched(comments) = msg {
-                    self.comments = Some(comments);
-                    self.state = State::CommentsFetched;
+            State::LoginSuccess {
+                ref mut aicu_progress,
+                ref mut offcial_msg,
+            } => {
+                match msg {
+                    Message::CommentsFetched(comments) => {
+                        self.comments = Some(comments);
+                        self.state = State::CommentsFetched;
+                    }
+                    Message::AicuFetchingState { now, max } => {
+                        *aicu_progress = Some((now, max));
+                    }
+                    Message::OfficialFetchingState(s) => {
+                        *offcial_msg = Some(s);
+                    }
+                    _ => {}
                 }
+
                 Task::none()
             }
             State::CommentsFetched => {
@@ -445,14 +459,17 @@ impl Main {
     }
 
     fn view(&self) -> Element<Message> {
-        match self.state {
+        match &self.state {
             State::WaitScanQRcode {
                 ref qr_data,
                 ref qr_code_state,
                 ..
             } => qrcode_page::view(qr_data, qr_code_state, self.aicu_state),
             State::WaitingForInputCookie => cookie_page::view(&self.cookie, self.aicu_state),
-            State::LoginSuccess => fetching_page::view(SOYO0),
+            State::LoginSuccess {
+                offcial_msg,
+                aicu_progress,
+            } => fetching_page::view(SOYO0, aicu_progress, offcial_msg),
             State::CommentsFetched => {
                 fetched_page::view(&self.comments, self.select_state, &self.sleep_seconds)
             }
@@ -488,19 +505,20 @@ enum MsgType {
     At,
 }
 
-async fn fetch_comment(cl: Arc<Client>) -> Arc<Mutex<Vec<Comment>>> {
-    let mut v: Vec<Comment> = Vec::new();
-    let oid_regex = Regex::new(r"bilibili://video/(\d+)").unwrap();
-    let mut msgtype = MsgType::Like;
-    let mut queryid = None;
-    let mut last_time = None;
-    let pb = ProgressBar::new_spinner();
-    loop {
-        let json: serde_json::Value;
-        let notifys: &serde_json::Value;
-        if queryid.is_none() && last_time.is_none() {
-            // 第一次请求
-            json = get_json(
+fn fetch_comment(cl: Arc<Client>) -> impl Stream<Item = Message> {
+    stream::channel(10, |mut output| async move {
+        let mut v: Vec<Comment> = Vec::new();
+        let oid_regex = Regex::new(r"bilibili://video/(\d+)").unwrap();
+        let mut msgtype = MsgType::Like;
+        let mut queryid = None;
+        let mut last_time = None;
+        let pb = ProgressBar::new_spinner();
+        loop {
+            let json: serde_json::Value;
+            let notifys: &serde_json::Value;
+            if queryid.is_none() && last_time.is_none() {
+                // 第一次请求
+                json = get_json(
                 Arc::clone(&cl),
                 match msgtype {
                     MsgType::Like => {
@@ -514,216 +532,225 @@ async fn fetch_comment(cl: Arc<Client>) -> Arc<Mutex<Vec<Comment>>> {
             )
             .await;
 
-            match msgtype {
-                MsgType::Like => {
-                    notifys = &json["data"]["total"]["items"];
-                    if notifys.as_array().unwrap().is_empty() {
-                        msgtype = MsgType::Reply;
-                        info!("没有收到赞的评论。");
-                        continue;
-                    }
-                    last_time = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
-                    queryid = json["data"]["total"]["cursor"]["id"].as_u64();
-                }
-                MsgType::Reply => {
-                    notifys = &json["data"]["items"];
-                    if notifys.as_array().unwrap().is_empty() {
-                        msgtype = MsgType::At;
-                        info!("没有收到评论的评论。");
-                        continue;
-                    }
-                    last_time = notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
-                    queryid = json["data"]["cursor"]["id"].as_u64();
-                }
-                MsgType::At => {
-                    notifys = &json["data"]["items"];
-                    if notifys.as_array().unwrap().is_empty() {
-                        info!("没有被At的评论。");
-                        break;
-                    }
-                    last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
-                    queryid = json["data"]["cursor"]["id"].as_u64();
-                }
-            }
-        } else {
-            let mut url = Url::parse(match msgtype {
-                MsgType::Like => {
-                    "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
-                }
-                MsgType::Reply => {
-                    "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
-                }
-                MsgType::At => "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
-            })
-            .unwrap();
-            match msgtype {
-                MsgType::Like => {
-                    url.query_pairs_mut()
-                        .append_pair("id", &queryid.unwrap().to_string())
-                        .append_pair("like_time", &last_time.unwrap().to_string());
-                    json = get_json(Arc::clone(&cl), url).await;
-                    notifys = &json["data"]["total"]["items"];
-                    last_time = notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
-                    queryid = json["data"]["total"]["cursor"]["id"].as_u64();
-                }
-                MsgType::Reply => {
-                    url.query_pairs_mut()
-                        .append_pair("id", &queryid.unwrap().to_string())
-                        .append_pair("reply_time", &last_time.unwrap().to_string());
-                    json = get_json(Arc::clone(&cl), url).await;
-                    notifys = &json["data"]["items"];
-                    last_time = notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
-                    queryid = json["data"]["cursor"]["id"].as_u64();
-                }
-                MsgType::At => {
-                    url.query_pairs_mut()
-                        .append_pair("id", &queryid.unwrap().to_string())
-                        .append_pair("at_time", &last_time.unwrap().to_string());
-                    json = get_json(Arc::clone(&cl), url).await;
-                    notifys = &json["data"]["items"];
-                    last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
-                    queryid = json["data"]["cursor"]["id"].as_u64();
-                }
-            }
-        }
-        // dbg!(queryid, last_time);
-        let mut r#type: u8;
-        'outer: for i in notifys.as_array().unwrap() {
-            if i["item"]["type"] == "reply" {
-                let rpid = if let MsgType::Like = msgtype {
-                    i["item"]["item_id"].as_u64().unwrap()
-                } else {
-                    i["item"]["target_id"].as_u64().unwrap()
-                };
-                if let MsgType::Like = msgtype {
-                } else {
-                    for i in &v {
-                        if i.rpid == rpid {
-                            pb.set_message(format!("Duplicate Comment: {rpid}"));
-                            continue 'outer;
+                match msgtype {
+                    MsgType::Like => {
+                        notifys = &json["data"]["total"]["items"];
+                        if notifys.as_array().unwrap().is_empty() {
+                            msgtype = MsgType::Reply;
+                            info!("没有收到赞的评论。");
+                            continue;
                         }
+                        last_time =
+                            notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
+                        queryid = json["data"]["total"]["cursor"]["id"].as_u64();
                     }
-                }
-                let uri = i["item"]["uri"].as_str().unwrap();
-                let oid;
-                if uri.contains("t.bilibili.com") {
-                    // 动态内评论
-                    oid = uri
-                        .replace("https://t.bilibili.com/", "")
-                        .parse::<u64>()
-                        .unwrap();
-                    let business_id = i["item"]["business_id"].as_u64();
-                    r#type = match business_id {
-                        Some(v) if v != 0 => v as u8,
-                        _ => 17,
-                    };
-                } else if uri.contains("https://h.bilibili.com/ywh/") {
-                    // 带图动态内评论
-                    oid = uri
-                        .replace("https://h.bilibili.com/ywh/", "")
-                        .parse::<u64>()
-                        .unwrap();
-                    r#type = 11;
-                } else if uri.contains("https://www.bilibili.com/read/cv") {
-                    // 专栏内评论
-                    oid = uri
-                        .replace("https://www.bilibili.com/read/cv", "")
-                        .parse::<u64>()
-                        .unwrap();
-                    r#type = 12;
-                } else if uri.contains("https://www.bilibili.com/video/") {
-                    // 视频内评论
-                    oid = oid_regex
-                        .captures(i["item"]["native_uri"].as_str().unwrap())
-                        .unwrap()
-                        .get(1)
-                        .unwrap()
-                        .as_str()
-                        .parse::<u64>()
-                        .unwrap();
-                    r#type = 1;
-                } else if uri.contains("https://www.bilibili.com/bangumi/play/") {
-                    // 电影（番剧？）内评论
-                    oid = i["item"]["subject_id"].as_u64().unwrap();
-                    r#type = 1;
-                } else if uri.is_empty() {
-                    info!("No URI, Skiped");
-                    continue;
-                } else {
-                    info!("Undefined URI:{}\nSkip this comment: {}", uri, rpid);
-                    continue;
-                }
-                let content = match msgtype {
-                    MsgType::Like => i["item"]["title"].as_str().unwrap().to_string(),
                     MsgType::Reply => {
-                        let v = i["item"]["target_reply_content"]
-                            .as_str()
-                            .unwrap()
-                            .to_string();
-                        if v.is_empty() {
-                            i["item"]["title"].as_str().unwrap().to_string()
-                        } else {
-                            v
+                        notifys = &json["data"]["items"];
+                        if notifys.as_array().unwrap().is_empty() {
+                            msgtype = MsgType::At;
+                            info!("没有收到评论的评论。");
+                            continue;
                         }
+                        last_time =
+                            notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
+                        queryid = json["data"]["cursor"]["id"].as_u64();
                     }
                     MsgType::At => {
-                        format!("{}\n({})", i["item"]["source_content"], i["item"]["title"])
+                        notifys = &json["data"]["items"];
+                        if notifys.as_array().unwrap().is_empty() {
+                            info!("没有被At的评论。");
+                            break;
+                        }
+                        last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
+                        queryid = json["data"]["cursor"]["id"].as_u64();
                     }
-                };
-                let notify_id = i["id"].as_u64().unwrap();
-                v.push(Comment {
-                    oid,
-                    r#type,
-                    rpid,
-                    content: content.clone(),
-                    remove_state: true,
-                    notify_id: Some(notify_id),
-                    tp: match msgtype {
-                        MsgType::Like => Some(0),
-                        MsgType::Reply => Some(1),
-                        MsgType::At => Some(2),
-                    },
-                });
-                pb.set_message(format!(
-                    "Push Comment: {}, Vec counts now: {}",
-                    rpid,
-                    v.len()
-                ));
-                pb.tick();
-                // info!("Push Comment: {rpid}");
-                // info!("Vec Counts:{}", v.len());
+                }
+            } else {
+                let mut url = Url::parse(match msgtype {
+                    MsgType::Like => {
+                        "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web"
+                    }
+                    MsgType::Reply => {
+                        "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web"
+                    }
+                    MsgType::At => "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
+                })
+                .unwrap();
+                match msgtype {
+                    MsgType::Like => {
+                        url.query_pairs_mut()
+                            .append_pair("id", &queryid.unwrap().to_string())
+                            .append_pair("like_time", &last_time.unwrap().to_string());
+                        json = get_json(Arc::clone(&cl), url).await;
+                        notifys = &json["data"]["total"]["items"];
+                        last_time =
+                            notifys.as_array().unwrap().last().unwrap()["like_time"].as_u64();
+                        queryid = json["data"]["total"]["cursor"]["id"].as_u64();
+                    }
+                    MsgType::Reply => {
+                        url.query_pairs_mut()
+                            .append_pair("id", &queryid.unwrap().to_string())
+                            .append_pair("reply_time", &last_time.unwrap().to_string());
+                        json = get_json(Arc::clone(&cl), url).await;
+                        notifys = &json["data"]["items"];
+                        last_time =
+                            notifys.as_array().unwrap().last().unwrap()["reply_time"].as_u64();
+                        queryid = json["data"]["cursor"]["id"].as_u64();
+                    }
+                    MsgType::At => {
+                        url.query_pairs_mut()
+                            .append_pair("id", &queryid.unwrap().to_string())
+                            .append_pair("at_time", &last_time.unwrap().to_string());
+                        json = get_json(Arc::clone(&cl), url).await;
+                        notifys = &json["data"]["items"];
+                        last_time = notifys.as_array().unwrap().last().unwrap()["at_time"].as_u64();
+                        queryid = json["data"]["cursor"]["id"].as_u64();
+                    }
+                }
             }
+            // dbg!(queryid, last_time);
+            let mut r#type: u8;
+            'outer: for i in notifys.as_array().unwrap() {
+                if i["item"]["type"] == "reply" {
+                    let rpid = if let MsgType::Like = msgtype {
+                        i["item"]["item_id"].as_u64().unwrap()
+                    } else {
+                        i["item"]["target_id"].as_u64().unwrap()
+                    };
+                    if let MsgType::Like = msgtype {
+                    } else {
+                        for i in &v {
+                            if i.rpid == rpid {
+                                pb.set_message(format!("Duplicate Comment: {rpid}"));
+                                continue 'outer;
+                            }
+                        }
+                    }
+                    let uri = i["item"]["uri"].as_str().unwrap();
+                    let oid;
+                    if uri.contains("t.bilibili.com") {
+                        // 动态内评论
+                        oid = uri
+                            .replace("https://t.bilibili.com/", "")
+                            .parse::<u64>()
+                            .unwrap();
+                        let business_id = i["item"]["business_id"].as_u64();
+                        r#type = match business_id {
+                            Some(v) if v != 0 => v as u8,
+                            _ => 17,
+                        };
+                    } else if uri.contains("https://h.bilibili.com/ywh/") {
+                        // 带图动态内评论
+                        oid = uri
+                            .replace("https://h.bilibili.com/ywh/", "")
+                            .parse::<u64>()
+                            .unwrap();
+                        r#type = 11;
+                    } else if uri.contains("https://www.bilibili.com/read/cv") {
+                        // 专栏内评论
+                        oid = uri
+                            .replace("https://www.bilibili.com/read/cv", "")
+                            .parse::<u64>()
+                            .unwrap();
+                        r#type = 12;
+                    } else if uri.contains("https://www.bilibili.com/video/") {
+                        // 视频内评论
+                        oid = oid_regex
+                            .captures(i["item"]["native_uri"].as_str().unwrap())
+                            .unwrap()
+                            .get(1)
+                            .unwrap()
+                            .as_str()
+                            .parse::<u64>()
+                            .unwrap();
+                        r#type = 1;
+                    } else if uri.contains("https://www.bilibili.com/bangumi/play/") {
+                        // 电影（番剧？）内评论
+                        oid = i["item"]["subject_id"].as_u64().unwrap();
+                        r#type = 1;
+                    } else if uri.is_empty() {
+                        info!("No URI, Skiped");
+                        continue;
+                    } else {
+                        info!("Undefined URI:{}\nSkip this comment: {}", uri, rpid);
+                        continue;
+                    }
+                    let content = match msgtype {
+                        MsgType::Like => i["item"]["title"].as_str().unwrap().to_string(),
+                        MsgType::Reply => {
+                            let v = i["item"]["target_reply_content"]
+                                .as_str()
+                                .unwrap()
+                                .to_string();
+                            if v.is_empty() {
+                                i["item"]["title"].as_str().unwrap().to_string()
+                            } else {
+                                v
+                            }
+                        }
+                        MsgType::At => {
+                            format!("{}\n({})", i["item"]["source_content"], i["item"]["title"])
+                        }
+                    };
+                    let notify_id = i["id"].as_u64().unwrap();
+                    v.push(Comment {
+                        oid,
+                        r#type,
+                        rpid,
+                        content: content.clone(),
+                        remove_state: true,
+                        notify_id: Some(notify_id),
+                        tp: match msgtype {
+                            MsgType::Like => Some(0),
+                            MsgType::Reply => Some(1),
+                            MsgType::At => Some(2),
+                        },
+                    });
+                    let msg = format!("Push Comment: {}, Vec counts now: {}", rpid, v.len());
+                    pb.set_message(msg.clone());
+                    output
+                        .send(Message::OfficialFetchingState(msg))
+                        .await
+                        .unwrap();
+                    pb.tick();
+                    // info!("Push Comment: {rpid}");
+                    // info!("Vec Counts:{}", v.len());
+                }
+            }
+            // push完检测是否为end
+            match msgtype {
+                MsgType::Like => {
+                    if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() {
+                        msgtype = MsgType::Reply;
+                        last_time = None;
+                        queryid = None;
+                        info!("收到赞的评论处理完毕。");
+                    }
+                }
+                MsgType::Reply => {
+                    if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
+                        msgtype = MsgType::At;
+                        last_time = None;
+                        queryid = None;
+                        info!("收到评论的评论处理完毕。");
+                        continue;
+                    }
+                }
+                MsgType::At => {
+                    if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
+                        info!("被At的评论处理完毕。");
+                        pb.finish_with_message("done");
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        // push完检测是否为end
-        match msgtype {
-            MsgType::Like => {
-                if json["data"]["total"]["cursor"]["is_end"].as_bool().unwrap() {
-                    msgtype = MsgType::Reply;
-                    last_time = None;
-                    queryid = None;
-                    info!("收到赞的评论处理完毕。");
-                }
-            }
-            MsgType::Reply => {
-                if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
-                    msgtype = MsgType::At;
-                    last_time = None;
-                    queryid = None;
-                    info!("收到评论的评论处理完毕。");
-                    continue;
-                }
-            }
-            MsgType::At => {
-                if json["data"]["cursor"]["is_end"].as_bool().unwrap() {
-                    info!("被At的评论处理完毕。");
-                    pb.finish_with_message("done");
-                    break;
-                }
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    Arc::new(Mutex::new(v))
+        output
+            .send(Message::CommentsFetched(Arc::new(Mutex::new(v))))
+            .await
+            .unwrap();
+    })
 }
 
 async fn remove_comment(cl: Arc<Client>, csrf: Arc<String>, i: &Comment) -> Result<u64, String> {
@@ -777,76 +804,114 @@ async fn get_uid(cl: Arc<Client>) -> u64 {
         .as_u64()
         .expect("Can't get uid. Please check your cookie data")
 }
-async fn fetch_comment_from_aicu(cl: Arc<Client>) -> Arc<Mutex<Vec<Comment>>> {
-    let uid = get_uid(Arc::clone(&cl)).await;
-    let mut page = 1;
-    let mut v = Vec::new();
+fn fetch_comment_from_aicu(cl: Arc<Client>) -> impl Stream<Item = types::Message> {
+    stream::channel(10, |mut output| async move {
+        let uid = get_uid(Arc::clone(&cl)).await;
+        let mut page = 1;
+        let mut v = Vec::new();
 
-    // get counts & init progress bar
-    let total_replies = get_json(
-        Arc::clone(&cl),
-        format!(
-            "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn=1&ps=0&mode=0&keyword=",
-            uid
-        ),
-    )
-    .await["data"]["cursor"]["all_count"]
-        .as_u64()
-        .unwrap();
-    let pb = ProgressBar::new(total_replies);
-    println!("正在从aicu.cc获取数据...");
-    loop {
-        let res = get_json(
+        // get counts & init progress bar
+        let total_replies = get_json(
             Arc::clone(&cl),
             format!(
+                "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn=1&ps=0&mode=0&keyword=",
+                uid
+            ),
+        )
+        .await["data"]["cursor"]["all_count"]
+            .as_u64()
+            .unwrap();
+        let pb = ProgressBar::new(total_replies);
+        let max = total_replies as f32;
+        let mut count = 0.0;
+        output
+            .send(Message::AicuFetchingState {
+                now: count,
+                max: max,
+            })
+            .await
+            .unwrap();
+        println!("正在从aicu.cc获取数据...");
+        loop {
+            let res = get_json(
+                Arc::clone(&cl),
+                format!(
                 "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn={}&ps=500&mode=0&keyword=",
                 uid, page
             ),
-        )
-        .await;
-        let replies = &res["data"]["replies"];
-        for i in replies.as_array().unwrap() {
-            let rpid = i["rpid"].as_str().unwrap().parse().unwrap();
-            v.push(Comment {
-                oid: i["dyn"]["oid"].as_str().unwrap().parse().unwrap(),
-                r#type: i["dyn"]["type"].as_u64().unwrap() as u8,
-                rpid,
-                content: i["message"].as_str().unwrap().to_string(),
-                remove_state: true,
-                notify_id: None,
-                tp: None,
-            });
-            pb.inc(1);
-            // info!("Push Comment: {rpid}");
-            // info!("Vec Counts:{}", v.len());
+            )
+            .await;
+            let replies = &res["data"]["replies"];
+            for i in replies.as_array().unwrap() {
+                let rpid = i["rpid"].as_str().unwrap().parse().unwrap();
+                v.push(Comment {
+                    oid: i["dyn"]["oid"].as_str().unwrap().parse().unwrap(),
+                    r#type: i["dyn"]["type"].as_u64().unwrap() as u8,
+                    rpid,
+                    content: i["message"].as_str().unwrap().to_string(),
+                    remove_state: true,
+                    notify_id: None,
+                    tp: None,
+                });
+                pb.inc(1);
+                count += 1.0;
+                output
+                    .send(Message::AicuFetchingState {
+                        now: count,
+                        max: max,
+                    })
+                    .await
+                    .unwrap();
+            }
+            page += 1;
+            if res["data"]["cursor"]["is_end"].as_bool().unwrap() {
+                pb.finish_with_message("Fetched successful from aicu.cc");
+                break;
+            }
         }
-        page += 1;
-        if res["data"]["cursor"]["is_end"].as_bool().unwrap() {
-            pb.finish_with_message("Fetched successful from aicu.cc");
-            break;
-        }
-    }
-    Arc::new(Mutex::new(v))
+        output
+            .send(Message::CommentsFetched(Arc::new(Mutex::new(v))))
+            .await
+            .unwrap();
+    })
 }
 
-async fn fetch_comment_both(cl: Arc<Client>) -> Arc<Mutex<Vec<Comment>>> {
-    let mut seen_ids = HashSet::new();
-    let v1 = fetch_comment_from_aicu(Arc::clone(&cl)).await;
-    let v2 = fetch_comment(Arc::clone(&cl)).await;
-
-    {
-        let mut v1_locked = v1.lock().await;
-        v1_locked.retain(|e| seen_ids.insert(e.rpid));
-
-        let v2_locked = v2.lock().await;
-        v2_locked.iter().for_each(|item| {
-            if seen_ids.insert(item.rpid) {
-                v1_locked.push(item.clone());
+fn fetch_comment_both(cl: Arc<Client>) -> impl Stream<Item = Message> {
+    stream::channel(10, |mut output| async move {
+        let mut a = Box::pin(fetch_comment_from_aicu(Arc::clone(&cl)));
+        let mut v1 = None;
+        while let Some(v) = a.next().await {
+            match v {
+                Message::CommentsFetched(v) => v1 = Some(v),
+                _ => output.send(v).await.unwrap(),
             }
-        });
-    }
+        }
+        let mut b = Box::pin(fetch_comment(Arc::clone(&cl)));
+        let mut v2 = None;
+        while let Some(v) = b.next().await {
+            match v {
+                Message::CommentsFetched(v) => v2 = Some(v),
+                _ => output.send(v).await.unwrap(),
+            }
+        }
 
-    v1
+        let mut seen_ids = HashSet::new();
+        {
+            let mut v1_locked = v1.as_ref().unwrap().lock().await;
+            v1_locked.retain(|e| seen_ids.insert(e.rpid));
+
+            let v2_locked = v2.as_ref().unwrap().lock().await;
+            v2_locked.iter().for_each(|item| {
+                if seen_ids.insert(item.rpid) {
+                    v1_locked.push(item.clone());
+                }
+            });
+        }
+        output
+            .send(Message::CommentsFetched(v1.unwrap()))
+            .await
+            .unwrap();
+    })
 }
 
 async fn remove_notify(cl: Arc<Client>, id: u64, csrf: Arc<String>, tp: String) {
