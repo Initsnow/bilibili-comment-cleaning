@@ -1,10 +1,4 @@
-use bilibili_comment_cleaning::{
-    get_json,
-    notify::{
-        fetch_remove_ated_notify, fetch_remove_liked_notify, fetch_remove_replyed_notify,
-        fetch_remove_system_notify, remove_notify,
-    },
-};
+use bilibili_comment_cleaning::{get_json, notify::*};
 use clap::{arg, command, Parser, Subcommand};
 use iced::{
     futures::{SinkExt, Stream, StreamExt},
@@ -71,20 +65,20 @@ fn main() -> iced::Result {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async move {
-        if let Some(Commands::RemoveNotify {
-            cookie,
-            liked_notify,
-            replyed_notify,
-            ated_notify,
-            system_notify,
-        }) = cli.command
-        {
-            if !liked_notify & !replyed_notify & !ated_notify & !system_notify {
-                info!("There's nothing to do...");
-                std::process::exit(0);
-            }
+    if let Some(Commands::RemoveNotify {
+        cookie,
+        liked_notify,
+        replyed_notify,
+        ated_notify,
+        system_notify,
+    }) = cli.command
+    {
+        if !liked_notify & !replyed_notify & !ated_notify & !system_notify {
+            info!("There's nothing to do...");
+            std::process::exit(0);
+        }
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
             let (cl, csrf) = create_client(cookie).await;
             let cl = Arc::new(cl);
             let csrf = Arc::new(csrf);
@@ -102,8 +96,8 @@ fn main() -> iced::Result {
                 fetch_remove_system_notify(cl.clone(), csrf.clone()).await;
             }
             std::process::exit(0);
-        }
-    });
+        });
+    }
 
     let icon = iced::window::icon::from_file_data(TAFFY, None).unwrap();
     iced::application("BilibiliCommentCleaning", Main::update, Main::view)

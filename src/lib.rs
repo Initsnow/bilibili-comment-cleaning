@@ -214,12 +214,12 @@ pub mod notify {
 
     #[instrument(skip_all)]
     pub async fn fetch_remove_system_notify(cl: Arc<Client>, csrf: Arc<String>) {
-        let mut v: Vec<(u64, u8)> = Vec::new();
+        let mut v: Vec<(u64, u8, u8)> = Vec::new();
         let mut cursor = None;
-
+        let mut api_type = 0_u8;
         loop {
-            let json: serde_json::Value;
-            let notifys: &serde_json::Value;
+            let mut json: serde_json::Value;
+            let mut notifys: &serde_json::Value;
             // first get
             if cursor.is_none() {
                 json = get_json(
@@ -228,9 +228,13 @@ pub mod notify {
                 )
                 .await;
                 notifys = &json["data"]["system_notify_list"];
-                if json["data"]["system_notify_list"].is_null() {
-                    info!("没有系统通知。");
-                    return;
+                if notifys.is_null() {
+                    api_type = 1;
+                    json = get_json(cl.clone(), format!("https://message.bilibili.com/x/sys-msg/query_unified_notify?csrf={csrf}&csrf={csrf}&page_size=10&build=0&mobi_app=web")).await;
+                    notifys = &json["data"]["system_notify_list"];
+                    if notifys.is_null() {
+                        return;
+                    }
                 }
                 cursor = notifys.as_array().unwrap().last().unwrap()["cursor"].as_u64();
             } else {
@@ -248,23 +252,34 @@ pub mod notify {
             for i in notifys.as_array().unwrap() {
                 let notify_id = i["id"].as_u64().unwrap();
                 let notify_type = i["type"].as_u64().unwrap() as u8;
-                v.push((notify_id, notify_type));
+                v.push((notify_id, notify_type, api_type));
                 info!("Fetched notify {notify_id}");
             }
         }
         for i in v {
-            remove_system_notify(Arc::clone(&cl), i.0, Arc::clone(&csrf), i.1).await;
+            remove_system_notify(Arc::clone(&cl), i.0, Arc::clone(&csrf), i.1, i.2).await;
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
     }
 
     #[instrument(skip(cl, csrf))]
-    pub async fn remove_system_notify(cl: Arc<Client>, id: u64, csrf: Arc<String>, tp: u8) {
+    pub async fn remove_system_notify(
+        cl: Arc<Client>,
+        id: u64,
+        csrf: Arc<String>,
+        tp: u8,
+        api_type: u8,
+    ) {
+        let json = if api_type == 0 {
+            json!({"csrf":*csrf,"ids":[id],"station_ids":[],"type":tp,"build":8140300,"mobi_app":"android"})
+        } else {
+            json!({"csrf":*csrf,"ids":[],"station_ids":[id],"type":tp,"build":8140300,"mobi_app":"android"})
+        };
         let res = cl
             .post(
                 format!("https://message.bilibili.com/x/sys-msg/del_notify_list?build=8140300&mobi_app=android&csrf={csrf}"),
             )
-        .json(&json!({"csrf":*csrf,"ids":[id],"station_ids":[],"type":tp,"build":8140300,"mobi_app":"android"}))
+            .json(&json)
             .send()
             .await
             .unwrap()

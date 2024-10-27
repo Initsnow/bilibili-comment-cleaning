@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
 use crate::types::{Comment, Message};
 use iced::{
     widget::{button, center, checkbox, column, row, scrollable, text, text_input, tooltip, Space},
     Alignment, Element, Length,
 };
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub fn view<'a>(
@@ -14,12 +13,10 @@ pub fn view<'a>(
     is_deleting: bool,
 ) -> Element<'a, Message> {
     if let Some(comments) = comments {
-        let head = text(format!(
-            "There are currently {} comments",
-            comments.blocking_lock().len()
-        ));
-        let a = comments.blocking_lock();
-        let cl = column(a.iter().cloned().map(|i| {
+        let a = comments.blocking_lock().clone();
+
+        let head = text(format!("There are currently {} comments", a.len()));
+        let cl = column(a.into_iter().map(|i| {
             checkbox(i.content, i.remove_state)
                 .text_shaping(iced::widget::text::Shaping::Advanced)
                 .on_toggle(move |b| Message::ChangeCommentRemoveState(i.rpid, b))
@@ -27,7 +24,6 @@ pub fn view<'a>(
         }))
         .padding([0, 15]);
         let comments = center(scrollable(cl).height(Length::Fill));
-
         let controls = row![
             if select_state {
                 button("select all").on_press(Message::CommentsSelectAll)

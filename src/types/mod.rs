@@ -1,7 +1,6 @@
-use std::sync::Arc;
-
 use bilibili_comment_cleaning::get_json;
 use reqwest::Client;
+use std::sync::Arc;
 use tokio::sync::{mpsc::Sender, Mutex};
 
 #[derive(Debug, Clone)]
