@@ -689,19 +689,33 @@ fn fetch_comment(cl: Arc<Client>) -> impl Stream<Item = Message> {
                     } else {
                         for i in &v {
                             if i.rpid == rpid {
-                                pb.set_message(format!("Duplicate Comment: {rpid}"));
+                                let msg = format!("Duplicate Comment: {rpid}");
+                                output
+                                    .send(Message::OfficialFetchingState(msg.clone()))
+                                    .await
+                                    .unwrap();
+                                pb.set_message(msg);
                                 continue 'outer;
                             }
                         }
                     }
                     let uri = i["item"]["uri"].as_str().unwrap();
                     let oid;
+
                     if uri.contains("t.bilibili.com") {
                         // 动态内评论
-                        oid = uri
-                            .replace("https://t.bilibili.com/", "")
-                            .parse::<u64>()
-                            .unwrap();
+                        oid = match uri.replace("https://t.bilibili.com/", "").parse::<u64>() {
+                            Ok(v) => v,
+                            Err(e) => {
+                                output
+                                    .send(Message::OfficialFetchingState(e.to_string()))
+                                    .await
+                                    .unwrap();
+                                error!("Error json:{}\nError uri:{}\n{}", json, uri, e.to_string());
+                                continue;
+                            }
+                        };
+
                         let business_id = i["item"]["business_id"].as_u64();
                         r#type = match business_id {
                             Some(v) if v != 0 => v as u8,
@@ -709,32 +723,94 @@ fn fetch_comment(cl: Arc<Client>) -> impl Stream<Item = Message> {
                         };
                     } else if uri.contains("https://h.bilibili.com/ywh/") {
                         // 带图动态内评论
-                        oid = uri
+                        oid = match uri
                             .replace("https://h.bilibili.com/ywh/", "")
                             .parse::<u64>()
-                            .unwrap();
+                        {
+                            Ok(v) => v,
+                            Err(e) => {
+                                output
+                                    .send(Message::OfficialFetchingState(e.to_string()))
+                                    .await
+                                    .unwrap();
+                                error!("Error json:{}\nError uri:{}\n{}", json, uri, e.to_string());
+                                continue;
+                            }
+                        };
                         r#type = 11;
                     } else if uri.contains("https://www.bilibili.com/read/cv") {
                         // 专栏内评论
-                        oid = uri
+                        oid = match uri
                             .replace("https://www.bilibili.com/read/cv", "")
                             .parse::<u64>()
-                            .unwrap();
+                        {
+                            Ok(v) => v,
+                            Err(e) => {
+                                output
+                                    .send(Message::OfficialFetchingState(e.to_string()))
+                                    .await
+                                    .unwrap();
+                                error!("Error json:{}\nError uri:{}\n{}", json, uri, e.to_string());
+                                continue;
+                            }
+                        };
                         r#type = 12;
                     } else if uri.contains("https://www.bilibili.com/video/") {
                         // 视频内评论
-                        oid = oid_regex
-                            .captures(i["item"]["native_uri"].as_str().unwrap())
-                            .unwrap()
-                            .get(1)
-                            .unwrap()
-                            .as_str()
-                            .parse::<u64>()
-                            .unwrap();
+                        oid = match oid_regex.captures(i["item"]["native_uri"].as_str().unwrap()) {
+                            Some(v) => match v.get(1).unwrap().as_str().parse::<u64>() {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    output
+                                        .send(Message::OfficialFetchingState(e.to_string()))
+                                        .await
+                                        .unwrap();
+                                    error!(
+                                        "Error json:{}\nError uri:{}\n{}",
+                                        json,
+                                        uri,
+                                        e.to_string()
+                                    );
+                                    continue;
+                                }
+                            },
+                            None => {
+                                output
+                                    .send(Message::OfficialFetchingState(
+                                        "Can't captures by the oid_regex var".to_string(),
+                                    ))
+                                    .await
+                                    .unwrap();
+                                error!(
+                                    "Error json:{}\nError uri:{}\n{}",
+                                    json,
+                                    uri,
+                                    "Can't captures by the oid_regex var".to_string()
+                                );
+                                continue;
+                            }
+                        };
                         r#type = 1;
                     } else if uri.contains("https://www.bilibili.com/bangumi/play/") {
                         // 电影（番剧？）内评论
-                        oid = i["item"]["subject_id"].as_u64().unwrap();
+                        oid = match i["item"]["subject_id"].as_u64() {
+                            Some(v) => v,
+                            None => {
+                                output
+                                    .send(Message::OfficialFetchingState(
+                                        "The subject_id field is null".to_string(),
+                                    ))
+                                    .await
+                                    .unwrap();
+                                error!(
+                                    "Error json:{}\nError uri:{}\n{}",
+                                    json,
+                                    uri,
+                                    "The subject_id field is null".to_string()
+                                );
+                                continue;
+                            }
+                        };
                         r#type = 1;
                     } else if uri.is_empty() {
                         info!("No URI, Skiped");
