@@ -1,9 +1,11 @@
-use crate::types::{Comment, Message};
+use crate::Main;
+use bilibili_comment_cleaning::types::{ChannelMsg, Comment, Message};
 use iced::{
     widget::{button, center, checkbox, column, row, scrollable, text, text_input, tooltip, Space},
-    Alignment, Element, Length,
+    Alignment, Element, Length, Task,
 };
 use std::sync::Arc;
+use tokio::spawn;
 use tokio::sync::Mutex;
 
 pub fn view<'a>(
@@ -18,7 +20,7 @@ pub fn view<'a>(
         let head = text(format!("There are currently {} comments", a.len()));
         let cl = column(a.into_iter().map(|i| {
             checkbox(i.content, i.remove_state)
-                .text_shaping(iced::widget::text::Shaping::Advanced)
+                .text_shaping(text::Shaping::Advanced)
                 .on_toggle(move |b| Message::ChangeCommentRemoveState(i.rpid, b))
                 .into()
         }))
@@ -63,4 +65,83 @@ pub fn view<'a>(
     } else {
         center(text("任何邪恶，终将绳之以法😭").shaping(text::Shaping::Advanced)).into()
     }
+}
+
+pub fn update(main: &mut Main, msg: Message) -> Task<Message> {
+    match msg {
+        Message::ChangeCommentRemoveState(rpid, b) => {
+            let a = Arc::clone(main.comments.as_ref().unwrap());
+            return Task::perform(
+                async move {
+                    for i in a.lock().await.iter_mut() {
+                        if i.rpid == rpid {
+                            i.remove_state = b;
+                        }
+                    }
+                },
+                Message::RefreshUI,
+            );
+        }
+        Message::CommentsSelectAll => {
+            let a = Arc::clone(main.comments.as_ref().unwrap());
+            main.select_state = false;
+            return Task::perform(
+                async move {
+                    for i in a.lock().await.iter_mut() {
+                        i.remove_state = true;
+                    }
+                },
+                Message::RefreshUI,
+            );
+        }
+        Message::CommentsDeselectAll => {
+            let a = Arc::clone(main.comments.as_ref().unwrap());
+            main.select_state = true;
+            return Task::perform(
+                async move {
+                    for i in a.lock().await.iter_mut() {
+                        i.remove_state = false;
+                    }
+                },
+                Message::RefreshUI,
+            );
+        }
+        Message::DeleteComment => {
+            let sender = main.sender.as_ref().unwrap().clone();
+            let cl = Arc::clone(&main.client);
+            let csrf = Arc::clone(main.csrf.as_ref().unwrap());
+            let seconds = main.sleep_seconds.parse::<f32>().unwrap_or(0.0);
+            let comments = Arc::clone(main.comments.as_ref().unwrap());
+            main.is_deleting = true;
+            spawn(async move {
+                sender
+                    .send(ChannelMsg::DeleteComment(cl, csrf, comments, seconds))
+                    .await
+                    .unwrap();
+            });
+        }
+        Message::CommentDeleted { rpid } => {
+            let a = Arc::clone(main.comments.as_ref().unwrap());
+            return Task::perform(
+                async move {
+                    a.lock().await.retain(|e| e.rpid != rpid);
+                },
+                Message::RefreshUI,
+            );
+        }
+        Message::SecondsInputChanged(v) => {
+            main.sleep_seconds = v;
+        }
+        Message::StopDeleteComment => {
+            let sender = main.sender.as_ref().unwrap().clone();
+            spawn(async move {
+                sender.send(ChannelMsg::StopDelete).await.unwrap();
+            });
+        }
+        Message::AllCommentDeleted => {
+            main.is_deleting = false;
+        }
+        _ => {}
+    }
+    Task::none()
 }

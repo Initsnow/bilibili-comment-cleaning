@@ -1,7 +1,8 @@
-use crate::types::Message;
+use crate::{Main, State};
+use bilibili_comment_cleaning::types::Message;
 use iced::{
     widget::{center, column, horizontal_rule, image, progress_bar, row, text},
-    Alignment, Element, Length,
+    Alignment, Element, Length, Task,
 };
 
 pub fn view<'a>(
@@ -37,4 +38,34 @@ pub fn view<'a>(
         .align_x(Alignment::Center),
     )
     .into()
+}
+
+pub fn update(main: &mut Main, msg: Message) -> Task<Message> {
+    match msg {
+        Message::CommentsFetched(comments) => {
+            main.comments = Some(comments);
+            main.state = State::CommentsFetched;
+        }
+        Message::AicuFetchingState { now, max } => {
+            if let State::Fetching {
+                ref mut aicu_progress,
+                ..
+            } = main.state
+            {
+                *aicu_progress = Some((now, max));
+            }
+        }
+        Message::OfficialFetchingState(s) => {
+            if let State::Fetching {
+                ref mut offcial_msg,
+                ..
+            } = main.state
+            {
+                *offcial_msg = Some(s);
+            }
+        }
+        _ => {}
+    }
+
+    Task::none()
 }
