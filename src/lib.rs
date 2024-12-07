@@ -52,6 +52,7 @@ pub async fn create_client(ck: String) -> (Client, String) {
     let cl = Client::builder()
         .default_headers(headers)
         .cookie_store(true)
+        .use_rustls_tls()
         .build()
         .unwrap();
 
