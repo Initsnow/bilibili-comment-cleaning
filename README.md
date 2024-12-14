@@ -34,6 +34,8 @@ bilibili 并未公开获取历史所有评论的接口，但是使用 [aicu.cc](
 
 感谢 [aicu.cc](https://www.aicu.cc/) 公开的 API 接口😎
 
-## 赞助😭
+## Todo
 
-Please [sponsor](https://rarebox.pages.dev/sponsor_own) me if you like this software😭😭😭
+- [ ] 错误处理
+- [ ] 评论数据的导入导出: [Waiting file dialog](https://www.github.com/iced-rs/iced/issues/1002)
+- [ ] 或许优化界面
