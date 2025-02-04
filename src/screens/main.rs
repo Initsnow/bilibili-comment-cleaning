@@ -1,5 +1,14 @@
+pub mod comment_viewer;
+pub mod danmu_viewer;
+pub mod notify_viewer;
+
 use crate::http::comment::Comment;
+use crate::http::danmu::Danmu;
+use crate::http::notify::Notify;
+use crate::screens::main::danmu_viewer::DanmuViewer;
+use crate::screens::main::notify_viewer::NotifyViewer;
 use crate::types::{ChannelMsg, Result};
+use comment_viewer::CommentViewer;
 use iced::{
     widget::{button, container, pane_grid, row, text},
     Element,
@@ -17,31 +26,26 @@ use tracing::error;
 pub struct Main {
     panes: pane_grid::State<Pane>,
     focus: Option<pane_grid::Pane>,
-    comments: Option<Arc<Mutex<HashMap<u64, Comment>>>>,
-    /// 删除请求间隔
-    sleep_seconds: String,
-    /// 是否正常删除
-    is_deleting: bool,
-    /// select all | deselect all state
-    select_state: bool,
+    cv: CommentViewer,
+    nv: NotifyViewer,
+    dv: DanmuViewer,
+    /// Retrying the fetch requires
+    pub aicu_state: bool,
 }
 impl fmt::Debug for Main {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Main")
             .field("panes", &"<HIDDEN>")
             .field("focus", &self.focus)
-            .field("comments", &self.comments)
-            .field("sleep_seconds", &self.sleep_seconds)
-            .field("is_deleting", &self.is_deleting)
-            .field("select_state", &self.select_state)
+            // todo: other fields
             .finish()
     }
 }
 
 enum Pane {
-    DataViewer,
-    Control,
-    Status,
+    CommentViewer,
+    DmViewer,
+    NotifyViewer,
 }
 
 #[derive(Debug, Clone)]
@@ -51,53 +55,62 @@ pub enum Message {
     PaneMaximize(pane_grid::Pane),
     PaneRestore,
     PaneClicked(pane_grid::Pane),
-    ChangeCommentRemoveState(u64, bool),
-    CommentsSelectAll,
-    CommentsDeselectAll,
-    SecondsInputChanged(String),
-    DeleteComment,
-    StopDeleteComment,
-    CommentDeleted { rpid: u64 },
-    AllCommentDeleted,
-    CommentsFetched(Result<Arc<Mutex<HashMap<u64, Comment>>>>),
+
+    CommentMsg(comment_viewer::Msg),
+    NotifyMsg(notify_viewer::Msg),
+    DanmuMsg(danmu_viewer::Msg),
 
     RefreshUI(()),
 }
 
 pub enum Action {
     Run(Task<Message>),
+
     DeleteComment {
         comments: Arc<Mutex<HashMap<u64, Comment>>>,
         sleep_seconds: f32,
     },
-    SendtoChannel(ChannelMsg),
+    RetryFetchComment,
 
+    DeleteNotify {
+        notify: Arc<Mutex<HashMap<u64, Notify>>>,
+        sleep_seconds: f32,
+    },
+    RetryFetchNotify,
+
+    DeleteDanmu {
+        danmu: Arc<Mutex<HashMap<u64, Danmu>>>,
+        sleep_seconds: f32,
+    },
+    RetryFetchDanmu,
+
+    SendtoChannel(ChannelMsg),
     None,
 }
 impl Main {
-    pub fn new() -> Self {
-        let pane_data = pane_grid::Configuration::Pane(Pane::DataViewer);
-        let pane_control = pane_grid::Configuration::Pane(Pane::Control);
-        let pane_log = pane_grid::Configuration::Pane(Pane::Status);
-        let pane_right_side = pane_grid::Configuration::Split {
-            axis: pane_grid::Axis::Horizontal,
-            ratio: 0.3,
-            a: Box::new(pane_control),
-            b: Box::new(pane_log),
+    pub fn new(aicu_state: bool) -> Self {
+        let pane_comment = pane_grid::Configuration::Pane(Pane::CommentViewer);
+        let pane_dm = pane_grid::Configuration::Pane(Pane::DmViewer);
+        let pane_notify = pane_grid::Configuration::Pane(Pane::NotifyViewer);
+        let pane_left_side = pane_grid::Configuration::Split {
+            axis: pane_grid::Axis::Vertical,
+            ratio: 0.5,
+            a: Box::new(pane_comment),
+            b: Box::new(pane_dm),
         };
         let cfg = pane_grid::Configuration::Split {
             axis: pane_grid::Axis::Vertical,
-            ratio: 0.5,
-            a: Box::new(pane_data),
-            b: Box::new(pane_right_side),
+            ratio: 2. / 3.,
+            a: Box::new(pane_left_side),
+            b: Box::new(pane_notify),
         };
         Main {
             panes: pane_grid::State::with_configuration(cfg),
             focus: None,
-            comments: None,
-            sleep_seconds: String::new(),
-            is_deleting: false,
-            select_state: false,
+            cv: CommentViewer::new(),
+            nv: NotifyViewer::new(),
+            dv: DanmuViewer::new(),
+            aicu_state,
         }
     }
     pub fn update(&mut self, message: Message) -> Action {
@@ -117,72 +130,10 @@ impl Main {
                 self.focus = Some(pane);
             }
 
-            Message::ChangeCommentRemoveState(rpid, b) => {
-                let a = Arc::clone(self.comments.as_ref().unwrap());
-                return Action::Run(Task::perform(
-                    async move {
-                        if let Some(v) = a.lock().await.get_mut(&rpid) {
-                            v.is_selected = b
-                        }
-                    },
-                    Message::RefreshUI,
-                ));
-            }
-            Message::CommentsSelectAll => {
-                let a = Arc::clone(self.comments.as_ref().unwrap());
-                self.select_state = false;
-                return Action::Run(Task::perform(
-                    async move {
-                        a.lock()
-                            .await
-                            .values_mut()
-                            .for_each(|e| e.is_selected = true);
-                    },
-                    Message::RefreshUI,
-                ));
-            }
-            Message::CommentsDeselectAll => {
-                let a = Arc::clone(self.comments.as_ref().unwrap());
-                self.select_state = true;
-                return Action::Run(Task::perform(
-                    async move {
-                        a.lock()
-                            .await
-                            .values_mut()
-                            .for_each(|e| e.is_selected = false);
-                    },
-                    Message::RefreshUI,
-                ));
-            }
-            Message::DeleteComment => {
-                return Action::DeleteComment {
-                    comments: self.comments.as_ref().unwrap().clone(),
-                    sleep_seconds: self.sleep_seconds.parse::<f32>().unwrap_or(0.0),
-                };
-            }
-            Message::CommentDeleted { rpid } => {
-                let a = Arc::clone(self.comments.as_ref().unwrap());
-                return Action::Run(Task::perform(
-                    async move {
-                        a.lock().await.remove(&rpid);
-                    },
-                    Message::RefreshUI,
-                ));
-            }
-            Message::SecondsInputChanged(v) => {
-                self.sleep_seconds = v;
-            }
-            Message::StopDeleteComment => return Action::SendtoChannel(ChannelMsg::StopDelete),
-            Message::AllCommentDeleted => {
-                self.is_deleting = false;
-            }
-            Message::CommentsFetched(Ok(c)) => {
-                self.comments = Some(c);
-            }
-            Message::CommentsFetched(Err(e)) => {
-                error!("Failed to fetch comments: {}", e);
-                //todo Retry
-            }
+            Message::CommentMsg(m) => return self.cv.update(m),
+            Message::NotifyMsg(m) => return self.nv.update(m),
+            Message::DanmuMsg(m) => return self.dv.update(m),
+
             Message::RefreshUI(_) => {}
         }
         Action::None
@@ -192,9 +143,9 @@ impl Main {
         let pane_grid = pane_grid(&self.panes, |pane, state, is_maximized| {
             let is_focused = focus == Some(pane);
             let title = match state {
-                Pane::DataViewer => "tmp: comment",
-                Pane::Control => "Control",
-                Pane::Status => "Status",
+                Pane::CommentViewer => "comment",
+                Pane::DmViewer => "danmu",
+                Pane::NotifyViewer => "notify",
             };
             let titlebar = pane_grid::TitleBar::new(text(title))
                 .controls(pane_grid::Controls::new(view_controls(pane, is_maximized)))
@@ -206,9 +157,9 @@ impl Main {
                 });
 
             pane_grid::Content::new(match state {
-                Pane::DataViewer => self.comment_viewer(),
-                Pane::Control => self.controls(),
-                Pane::Status => "tmp: Status".into(),
+                Pane::CommentViewer => self.cv.view().map(Message::CommentMsg),
+                Pane::DmViewer => self.dv.view().map(Message::DanmuMsg),
+                Pane::NotifyViewer => self.nv.view().map(Message::NotifyMsg),
             })
             .title_bar(titlebar)
             .style(if is_focused {
@@ -222,66 +173,6 @@ impl Main {
         .on_click(Message::PaneClicked)
         .spacing(5);
         container(pane_grid).padding(5).into()
-    }
-
-    fn comment_viewer(&self) -> Element<Message> {
-        if let Some(comments) = &self.comments {
-            let a = {
-                let guard = comments.blocking_lock();
-                guard.clone()
-            };
-
-            let head = text(format!("There are currently {} comments", a.len()));
-            let cl = column(a.into_iter().map(|(rpid, i)| {
-                checkbox(i.content.to_string(), i.is_selected)
-                    .text_shaping(text::Shaping::Advanced)
-                    .on_toggle(move |b| Message::ChangeCommentRemoveState(rpid, b))
-                    .into()
-            }))
-            .padding([0, 15]);
-            let comments = center(scrollable(cl).height(Length::Fill));
-
-            center(
-                column![head, comments.width(Length::FillPortion(3))]
-                    .align_x(Alignment::Center)
-                    .spacing(10),
-            )
-            .padding([5, 20])
-            .into()
-        } else {
-            center(text("None 😭").shaping(text::Shaping::Advanced)).into()
-        }
-    }
-    fn controls(&self) -> Element<Message> {
-        row![
-            if self.select_state {
-                button("select all").on_press(Message::CommentsSelectAll)
-            } else {
-                button("deselect all").on_press(Message::CommentsDeselectAll)
-            },
-            Space::with_width(Length::Fill),
-            row![
-                tooltip(
-                    text_input("0", &self.sleep_seconds)
-                        .align_x(Alignment::Center)
-                        .on_input(Message::SecondsInputChanged)
-                        .on_submit(Message::DeleteComment)
-                        .width(Length::Fixed(33.0)),
-                    "Sleep seconds",
-                    tooltip::Position::FollowCursor
-                ),
-                text("s"),
-                if self.is_deleting {
-                    button("stop").on_press(Message::StopDeleteComment)
-                } else {
-                    button("remove").on_press(Message::DeleteComment)
-                }
-            ]
-            .spacing(5)
-            .align_y(Alignment::Center)
-        ]
-        .height(Length::Shrink)
-        .into()
     }
 }
 

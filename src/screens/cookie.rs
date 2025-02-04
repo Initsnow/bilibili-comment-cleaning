@@ -5,12 +5,14 @@ use iced::{
     Element, Length, Task,
 };
 use reqwest::Client;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tracing::error;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Cookie {
     cookie: String,
-    aicu_state: bool,
+    aicu_state: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,8 +36,11 @@ pub enum Action {
 }
 
 impl Cookie {
-    pub fn new() -> Self {
-        Cookie::default()
+    pub fn new(aicu_state: Arc<AtomicBool>) -> Self {
+        Cookie {
+            cookie: String::new(),
+            aicu_state,
+        }
     }
     pub fn view(&self) -> Element<Message> {
         let cookie = &self.cookie;
@@ -48,7 +53,7 @@ impl Cookie {
                     button("enter").on_press(Message::CookieSubmited(cookie.clone())),
                 ]
                 .spacing(5),
-                toggler(self.aicu_state)
+                toggler(self.aicu_state.load(Ordering::SeqCst))
                     .on_toggle(Message::AicuToggled)
                     .label("Also fetch comments from aicu.cc"),
                 row![
@@ -74,11 +79,11 @@ impl Cookie {
                 return Action::Boot {
                     client,
                     csrf,
-                    aicu_state: self.aicu_state,
+                    aicu_state: self.aicu_state.load(Ordering::SeqCst),
                 };
             }
             Message::AicuToggled(b) => {
-                self.aicu_state = b;
+                self.aicu_state.store(b, Ordering::SeqCst);
             }
             Message::EntertoQRcodeScan => {
                 return Action::EnterQRCode;

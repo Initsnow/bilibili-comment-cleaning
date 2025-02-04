@@ -5,16 +5,18 @@ use iced::{
     Alignment, Element, Length, Task,
 };
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::error;
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct QRCode {
     qr_data: Option<qr_code::Data>,
     qr_code: Option<Arc<Mutex<QRdata>>>,
     qr_code_state: Option<u64>,
-    aicu_state: bool,
+    aicu_state: Arc<AtomicBool>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,15 +32,21 @@ pub enum Action {
     Run(Task<Message>),
     SendtoChannel(ChannelMsg),
     GetState(Arc<Mutex<QRdata>>),
-    Boot { csrf: String, aicu: bool },
+    Boot { csrf: String, aicu_state: bool },
     EnterCookie,
     None,
 }
 
 impl QRCode {
-    pub fn new() -> (Self, Task<Message>) {
+    pub fn new(aicu_state: Arc<AtomicBool>) -> (Self, Task<Message>) {
         (
-            Self::default(),
+            QRCode {
+                qr_data: None,
+                qr_code: None,
+                qr_code_state: None,
+                aicu_state,
+                error: None,
+            },
             Task::perform(QRdata::request_qrcode(), Message::QRcodeGot),
         )
     }
@@ -57,7 +65,7 @@ impl QRCode {
                 cl = cl
                     .push(text(resmsg).shaping(text::Shaping::Advanced))
                     .push(
-                        toggler(self.aicu_state)
+                        toggler(self.aicu_state.load(Ordering::SeqCst))
                             .on_toggle(Message::AicuToggled)
                             .label("Also fetch comments from aicu.cc"),
                     )
@@ -66,11 +74,19 @@ impl QRCode {
                         button("Change to input cookie").on_press(Message::EntertoCookieInput)
                     ]);
             }
+            if let Some(e) = &self.error {
+                cl = column![text(e).shaping(text::Shaping::Advanced)];
+            }
             center(cl.spacing(10).align_x(Alignment::Center))
                 .padding(20)
                 .into()
         } else {
-            center("QRCode is loading...").into()
+            center(if let Some(e) = &self.error {
+                text(e).shaping(text::Shaping::Advanced)
+            } else {
+                "QRCode is loading...".into()
+            })
+            .into()
         }
     }
 
@@ -82,7 +98,7 @@ impl QRCode {
                 return Action::SendtoChannel(ChannelMsg::StartRefreshQRcodeState);
             }
             Message::AicuToggled(b) => {
-                self.aicu_state = b;
+                self.aicu_state.store(b, Ordering::SeqCst);
             }
             Message::QRcodeRefresh => {
                 return Action::GetState(self.qr_code.as_ref().unwrap().clone());
@@ -90,23 +106,28 @@ impl QRCode {
             Message::QRcodeState(v) => match v {
                 Ok(v) => {
                     self.qr_code_state = Some(v.0);
+                    self.error = None;
                     if v.0 == 0 {
                         return Action::Boot {
                             csrf: v.1.unwrap(),
-                            aicu: self.aicu_state,
+                            aicu_state: self.aicu_state.load(Ordering::SeqCst),
                         };
                     }
                 }
                 Err(e) => {
-                    self.qr_code_state = Some(114514);
-                    error!("QR code state error: {}", e);
+                    self.qr_code_state = None;
+                    let e = format!("Failed to get QRCode state: {:#?}", e);
+                    error!(e);
+                    self.error = Some(e);
                 }
             },
             Message::EntertoCookieInput => {
                 return Action::EnterCookie;
             }
             Message::QRcodeGot(Err(e)) => {
-                error!("QR code fetch error: {:?}", e);
+                let e = format!("Failed to fetch QRCode: {:#?}", e);
+                error!(e);
+                self.error = Some(e);
             }
         }
         Action::None

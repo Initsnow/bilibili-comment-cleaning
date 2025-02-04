@@ -67,7 +67,7 @@ impl Comment {
         if json_res["code"].as_i64().unwrap() == 0 {
             // 如果is_some则删除通知
             if let Some(notify_id) = self.notify_id {
-                Notify::new(self.tp.unwrap())
+                Notify::new(String::new(), self.tp.unwrap())
                     .remove(notify_id, cl, csrf)
                     .await?;
             }

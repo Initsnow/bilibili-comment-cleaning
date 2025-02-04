@@ -1,5 +1,7 @@
 use super::screens::*;
 use crate::http::comment::Comment;
+use crate::http::danmu::Danmu;
+use crate::http::notify::Notify;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +27,21 @@ pub enum ChannelMsg {
         Arc<Mutex<HashMap<u64, Comment>>>,
         f32,
     ),
-    StopDelete,
+    StopDeleteComment,
+    DeleteNotify(
+        Arc<Client>,
+        Arc<String>,
+        Arc<Mutex<HashMap<u64, Notify>>>,
+        f32,
+    ),
+    StopDeleteNotify,
+    DeleteDanmu(
+        Arc<Client>,
+        Arc<String>,
+        Arc<Mutex<HashMap<u64, Danmu>>>,
+        f32,
+    ),
+    StopDeleteDanmu,
     StartRefreshQRcodeState,
     StopRefreshQRcodeState,
 }
