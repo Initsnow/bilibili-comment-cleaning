@@ -171,6 +171,8 @@ async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
     Ok(h)
 }
 
+// 为什么没Ated Comment？因为我没数据测试了，半年前删完了
+
 pub async fn fetch(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>> {
     let (mut h1, h2) = try_join!(fetch_liked(cl.clone()), fetch_replyed(cl.clone()))?;
     h1.extend(h2.into_iter());
