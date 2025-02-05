@@ -1,9 +1,18 @@
-use crate::types::Result;
+use crate::http::{danmu, notify};
+use crate::screens::main;
+use crate::types::{Message, RemoveAble, Result};
+use crate::{dvmsg, nvmsg};
+use iced::Task;
 use reqwest::Client;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::try_join;
 use tracing::{error, info};
 
+pub mod aicu;
 pub mod official;
 
 #[derive(Clone, Debug)]
@@ -21,8 +30,10 @@ impl Danmu {
             is_selected: true,
         }
     }
+}
 
-    pub async fn remove(&self, dmid: u64, cl: Arc<Client>, csrf: Arc<String>) -> Result<u64> {
+impl RemoveAble for Danmu {
+    async fn remove(&self, dmid: u64, cl: Arc<Client>, csrf: Arc<String>) -> Result<u64> {
         let json_res: Value = cl
             .post(
                 "
@@ -51,5 +62,32 @@ impl Danmu {
             error!(e);
             Err(e.into())
         }
+    }
+}
+
+async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> {
+    let (m1, m2) = try_join!(official::fetch(cl.clone()), aicu::fetch(cl.clone()))?;
+
+    let (m1, m2) = {
+        let mut lock1 = m1.lock().await;
+        let mut lock2 = m2.lock().await;
+        (
+            mem::replace(&mut *lock1, HashMap::new()),
+            mem::replace(&mut *lock2, HashMap::new()),
+        )
+    };
+
+    Ok(Arc::new(Mutex::new(m1.into_iter().chain(m2).collect())))
+}
+
+pub fn fetch_via_aicu_state(cl: Arc<Client>, aicu_state: bool) -> Task<Message> {
+    if aicu_state {
+        Task::perform(fetch_both(cl), |e| {
+            Message::Main(main::Message::DanmuMsg(dvmsg::DanmusFetched(e)))
+        })
+    } else {
+        Task::perform(official::fetch(cl), |e| {
+            Message::Main(main::Message::DanmuMsg(dvmsg::DanmusFetched(e)))
+        })
     }
 }

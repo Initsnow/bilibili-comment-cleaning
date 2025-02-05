@@ -1,7 +1,7 @@
 use crate::http::comment::Comment;
-use crate::main;
 use crate::main::Action;
 use crate::types::ChannelMsg;
+use crate::{main, nvmsg};
 use iced::widget::{
     button, center, checkbox, column, row, scrollable, text, text_input, tooltip, Space,
 };
@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::error;
 
+#[derive(Debug)]
 pub struct CommentViewer {
     pub comments: Option<Arc<Mutex<HashMap<u64, Comment>>>>,
     /// 删除请求间隔
@@ -26,7 +27,7 @@ pub struct CommentViewer {
 }
 
 #[derive(Clone, Debug)]
-pub enum Msg {
+pub enum CvMsg {
     SecondsInputChanged(String),
     ChangeCommentRemoveState(u64, bool),
     CommentsSelectAll,
@@ -50,7 +51,7 @@ impl CommentViewer {
         }
     }
 
-    pub fn view(&self) -> Element<Msg> {
+    pub fn view(&self) -> Element<CvMsg> {
         if let Some(comments) = &self.comments {
             let a = {
                 let guard = comments.blocking_lock();
@@ -65,34 +66,34 @@ impl CommentViewer {
             let cl = column(a.into_iter().map(|(rpid, i)| {
                 checkbox(i.content.to_string(), i.is_selected)
                     .text_shaping(text::Shaping::Advanced)
-                    .on_toggle(move |b| Msg::ChangeCommentRemoveState(rpid, b))
+                    .on_toggle(move |b| CvMsg::ChangeCommentRemoveState(rpid, b))
                     .into()
             }))
             .padding([0, 15]);
-            let comments = center(scrollable(cl).height(Length::Fill));
+            let comments = center(scrollable(cl).height(Length::Fill).width(Length::Fill));
 
             let control = row![
                 if self.select_state {
-                    button("select all").on_press(Msg::CommentsSelectAll)
+                    button("select all").on_press(CvMsg::CommentsSelectAll)
                 } else {
-                    button("deselect all").on_press(Msg::CommentsDeselectAll)
+                    button("deselect all").on_press(CvMsg::CommentsDeselectAll)
                 },
                 Space::with_width(Length::Fill),
                 row![
                     tooltip(
                         text_input("0", &self.sleep_seconds)
                             .align_x(Alignment::Center)
-                            .on_input(Msg::SecondsInputChanged)
-                            .on_submit(Msg::DeleteComment)
+                            .on_input(CvMsg::SecondsInputChanged)
+                            .on_submit(CvMsg::DeleteComment)
                             .width(Length::Fixed(33.0)),
                         "Sleep seconds",
                         tooltip::Position::FollowCursor
                     ),
                     text("s"),
                     if self.is_deleting {
-                        button("stop").on_press(Msg::StopDeleteComment)
+                        button("stop").on_press(CvMsg::StopDeleteComment)
                     } else {
-                        button("remove").on_press(Msg::DeleteComment)
+                        button("remove").on_press(CvMsg::DeleteComment)
                     }
                 ]
                 .spacing(5)
@@ -101,7 +102,7 @@ impl CommentViewer {
             .height(Length::Shrink);
 
             center(
-                iced::widget::column![head, comments.width(Length::FillPortion(3)), control]
+                iced::widget::column![head, comments, control]
                     .align_x(Alignment::Center)
                     .spacing(10),
             )
@@ -122,7 +123,7 @@ impl CommentViewer {
                 .push_maybe(
                     self.error
                         .as_ref()
-                        .map(|_| button("Retry").on_press(Msg::RetryFetchComment)),
+                        .map(|_| button("Retry").on_press(CvMsg::RetryFetchComment)),
                 )
                 .align_x(Alignment::Center)
                 .spacing(4),
@@ -131,9 +132,9 @@ impl CommentViewer {
         }
     }
 
-    pub fn update(&mut self, msg: Msg) -> Action {
+    pub fn update(&mut self, msg: CvMsg) -> Action {
         match msg {
-            Msg::ChangeCommentRemoveState(rpid, b) => {
+            CvMsg::ChangeCommentRemoveState(rpid, b) => {
                 let a = Arc::clone(self.comments.as_ref().unwrap());
                 return Action::Run(Task::perform(
                     async move {
@@ -144,7 +145,7 @@ impl CommentViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::CommentsSelectAll => {
+            CvMsg::CommentsSelectAll => {
                 let a = Arc::clone(self.comments.as_ref().unwrap());
                 self.select_state = false;
                 return Action::Run(Task::perform(
@@ -157,7 +158,7 @@ impl CommentViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::CommentsDeselectAll => {
+            CvMsg::CommentsDeselectAll => {
                 let a = Arc::clone(self.comments.as_ref().unwrap());
                 self.select_state = true;
                 return Action::Run(Task::perform(
@@ -170,39 +171,45 @@ impl CommentViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::DeleteComment => {
+            CvMsg::DeleteComment => {
                 return Action::DeleteComment {
                     comments: self.comments.as_ref().unwrap().clone(),
                     sleep_seconds: self.sleep_seconds.parse::<f32>().unwrap_or(0.0),
                 };
             }
-            Msg::CommentDeleted { rpid } => {
+            CvMsg::CommentDeleted { rpid } => {
                 let a = Arc::clone(self.comments.as_ref().unwrap());
                 return Action::Run(Task::perform(
-                    async move {
-                        a.lock().await.remove(&rpid);
+                    async move { a.lock().await.remove(&rpid).unwrap() },
+                    |i| {
+                        if let Some(i) = i.notify_id {
+                            main::Message::NotifyMsg(nvmsg::NotifyDeleted { id: i })
+                        } else {
+                            main::Message::RefreshUI(())
+                        }
                     },
-                    main::Message::RefreshUI,
                 ));
             }
-            Msg::SecondsInputChanged(v) => {
+            CvMsg::SecondsInputChanged(v) => {
                 self.sleep_seconds = v;
             }
-            Msg::StopDeleteComment => return Action::SendtoChannel(ChannelMsg::StopDeleteComment),
-            Msg::AllCommentDeleted => {
+            CvMsg::StopDeleteComment => {
+                return Action::SendtoChannel(ChannelMsg::StopDeleteComment)
+            }
+            CvMsg::AllCommentDeleted => {
                 self.is_deleting = false;
             }
-            Msg::CommentsFetched(Ok(c)) => {
+            CvMsg::CommentsFetched(Ok(c)) => {
                 self.is_fetching = false;
                 self.comments = Some(c);
             }
-            Msg::CommentsFetched(Err(e)) => {
+            CvMsg::CommentsFetched(Err(e)) => {
                 self.is_fetching = false;
                 let e = format!("Failed to fetch comments: {:?}", e);
                 error!(e);
                 self.error = Some(e);
             }
-            Msg::RetryFetchComment => {
+            CvMsg::RetryFetchComment => {
                 self.error = None;
                 self.is_fetching = true;
                 return Action::RetryFetchComment;

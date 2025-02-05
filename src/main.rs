@@ -180,7 +180,7 @@ impl App {
                             ));
                             Task::none()
                         }
-                        main::Action::RetryFetchComment => fetch_comment_via_aicu_state(
+                        main::Action::RetryFetchComment => comment::fetch_via_aicu_state(
                             self.client.clone(),
                             self.aicu_state.load(Ordering::SeqCst),
                         ),
@@ -198,9 +198,9 @@ impl App {
                             ));
                             Task::none()
                         }
-                        main::Action::RetryFetchNotify => Task::perform(
-                            notify::fetch(self.client.clone(), self.csrf.as_ref().unwrap().clone()),
-                            |e| Message::Main(main::Message::NotifyMsg(nvmsg::NotifysFetched(e))),
+                        main::Action::RetryFetchNotify => notify::fetch_task(
+                            self.client.clone(),
+                            self.csrf.as_ref().unwrap().clone(),
                         ),
                         main::Action::DeleteDanmu {
                             danmu,
@@ -216,11 +216,10 @@ impl App {
                             ));
                             Task::none()
                         }
-                        main::Action::RetryFetchDanmu => {
-                            Task::perform(danmu::official::fetch(self.client.clone()), |e| {
-                                Message::Main(main::Message::DanmuMsg(dvmsg::DanmusFetched(e)))
-                            })
-                        }
+                        main::Action::RetryFetchDanmu => danmu::fetch_via_aicu_state(
+                            self.client.clone(),
+                            self.aicu_state.load(Ordering::SeqCst),
+                        ),
                         main::Action::None => Task::none(),
                     }
                 } else {
@@ -253,48 +252,8 @@ impl App {
 }
 
 fn fetch_task(cl: Arc<Client>, csrf: Arc<String>, aicu_state: bool) -> Task<Message> {
-    //todo:
-    // fetch_comment_via_aicu_state(cl.clone(), aicu_state).chain(fetch_notify_via_aicu_state(
-    //     cl.clone(),
-    //     csrf,
-    //     aicu_state,
-    // ))
-
-    // Task::perform(
-    //     notify::fetch(cl, csrf),
-    //     |e| Message::Main(main::Message::NotifyMsg(nvmsg::NotifysFetched(e))),
-    // )
-
-    Task::perform(danmu::official::fetch(cl), |e| {
-        Message::Main(main::Message::DanmuMsg(dvmsg::DanmusFetched(e)))
-    })
-}
-
-fn fetch_comment_via_aicu_state(cl: Arc<Client>, aicu_state: bool) -> Task<Message> {
-    if aicu_state {
-        Task::perform(comment::fetch_both(cl), |e| {
-            Message::Main(main::Message::CommentMsg(cvmsg::CommentsFetched(e)))
-        })
-    } else {
-        Task::perform(comment::fetch_from_official(cl), |e| {
-            Message::Main(main::Message::CommentMsg(cvmsg::CommentsFetched(e)))
-        })
-    }
-}
-
-fn fetch_danmu_via_aicu_state(
-    cl: Arc<Client>,
-    csrf: Arc<String>,
-    aicu_state: bool,
-) -> Task<Message> {
-    if aicu_state {
-        //todo add from aicu fn
-        Task::perform(danmu::official::fetch(cl), |e| {
-            Message::Main(main::Message::DanmuMsg(dvmsg::DanmusFetched(e)))
-        })
-    } else {
-        Task::perform(notify::fetch(cl, csrf), |e| {
-            Message::Main(main::Message::NotifyMsg(nvmsg::NotifysFetched(e)))
-        })
-    }
+    notify::fetch_task(cl.clone(), csrf.clone()).chain(
+        comment::fetch_via_aicu_state(cl.clone(), aicu_state)
+            .chain(danmu::fetch_via_aicu_state(cl.clone(), aicu_state)),
+    )
 }

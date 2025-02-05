@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::error;
 
+#[derive(Debug)]
 pub struct NotifyViewer {
     pub notify: Option<Arc<Mutex<HashMap<u64, Notify>>>>,
     /// 删除请求间隔
@@ -26,7 +27,7 @@ pub struct NotifyViewer {
 }
 
 #[derive(Clone, Debug)]
-pub enum Msg {
+pub enum NvMsg {
     SecondsInputChanged(String),
     ChangeNotifyRemoveState(u64, bool),
     NotifysSelectAll,
@@ -50,7 +51,7 @@ impl NotifyViewer {
         }
     }
 
-    pub fn view(&self) -> Element<Msg> {
+    pub fn view(&self) -> Element<NvMsg> {
         if let Some(comments) = &self.notify {
             let a = {
                 let guard = comments.blocking_lock();
@@ -65,34 +66,34 @@ impl NotifyViewer {
             let cl = column(a.into_iter().map(|(id, i)| {
                 checkbox(i.content.to_string(), i.is_selected)
                     .text_shaping(text::Shaping::Advanced)
-                    .on_toggle(move |b| Msg::ChangeNotifyRemoveState(id, b))
+                    .on_toggle(move |b| NvMsg::ChangeNotifyRemoveState(id, b))
                     .into()
             }))
             .padding([0, 15]);
-            let comments = center(scrollable(cl).height(Length::Fill));
+            let comments = center(scrollable(cl).height(Length::Fill).width(Length::Fill));
 
             let control = row![
                 if self.select_state {
-                    button("select all").on_press(Msg::NotifysSelectAll)
+                    button("select all").on_press(NvMsg::NotifysSelectAll)
                 } else {
-                    button("deselect all").on_press(Msg::NotifysDeselectAll)
+                    button("deselect all").on_press(NvMsg::NotifysDeselectAll)
                 },
                 Space::with_width(Length::Fill),
                 row![
                     tooltip(
                         text_input("0", &self.sleep_seconds)
                             .align_x(Alignment::Center)
-                            .on_input(Msg::SecondsInputChanged)
-                            .on_submit(Msg::DeleteNotify)
+                            .on_input(NvMsg::SecondsInputChanged)
+                            .on_submit(NvMsg::DeleteNotify)
                             .width(Length::Fixed(33.0)),
                         "Sleep seconds",
                         tooltip::Position::FollowCursor
                     ),
                     text("s"),
                     if self.is_deleting {
-                        button("stop").on_press(Msg::StopDeleteNotify)
+                        button("stop").on_press(NvMsg::StopDeleteNotify)
                     } else {
-                        button("remove").on_press(Msg::DeleteNotify)
+                        button("remove").on_press(NvMsg::DeleteNotify)
                     }
                 ]
                 .spacing(5)
@@ -101,7 +102,7 @@ impl NotifyViewer {
             .height(Length::Shrink);
 
             center(
-                iced::widget::column![head, comments.width(Length::FillPortion(3)), control]
+                iced::widget::column![head, comments, control]
                     .align_x(Alignment::Center)
                     .spacing(10),
             )
@@ -122,7 +123,7 @@ impl NotifyViewer {
                 .push_maybe(
                     self.error
                         .as_ref()
-                        .map(|_| button("Retry").on_press(Msg::RetryFetchNotify)),
+                        .map(|_| button("Retry").on_press(NvMsg::RetryFetchNotify)),
                 )
                 .align_x(Alignment::Center)
                 .spacing(4),
@@ -131,9 +132,9 @@ impl NotifyViewer {
         }
     }
 
-    pub fn update(&mut self, msg: Msg) -> Action {
+    pub fn update(&mut self, msg: NvMsg) -> Action {
         match msg {
-            Msg::ChangeNotifyRemoveState(id, b) => {
+            NvMsg::ChangeNotifyRemoveState(id, b) => {
                 let a = Arc::clone(self.notify.as_ref().unwrap());
                 return Action::Run(Task::perform(
                     async move {
@@ -144,7 +145,7 @@ impl NotifyViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::NotifysSelectAll => {
+            NvMsg::NotifysSelectAll => {
                 let a = Arc::clone(self.notify.as_ref().unwrap());
                 self.select_state = false;
                 return Action::Run(Task::perform(
@@ -157,7 +158,7 @@ impl NotifyViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::NotifysDeselectAll => {
+            NvMsg::NotifysDeselectAll => {
                 let a = Arc::clone(self.notify.as_ref().unwrap());
                 self.select_state = true;
                 return Action::Run(Task::perform(
@@ -170,13 +171,13 @@ impl NotifyViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::DeleteNotify => {
+            NvMsg::DeleteNotify => {
                 return Action::DeleteNotify {
                     notify: self.notify.as_ref().unwrap().clone(),
                     sleep_seconds: self.sleep_seconds.parse::<f32>().unwrap_or(0.0),
                 };
             }
-            Msg::NotifyDeleted { id } => {
+            NvMsg::NotifyDeleted { id } => {
                 let a = Arc::clone(self.notify.as_ref().unwrap());
                 return Action::Run(Task::perform(
                     async move {
@@ -185,24 +186,24 @@ impl NotifyViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::SecondsInputChanged(v) => {
+            NvMsg::SecondsInputChanged(v) => {
                 self.sleep_seconds = v;
             }
-            Msg::StopDeleteNotify => return Action::SendtoChannel(ChannelMsg::StopDeleteComment),
-            Msg::AllNotifyDeleted => {
+            NvMsg::StopDeleteNotify => return Action::SendtoChannel(ChannelMsg::StopDeleteComment),
+            NvMsg::AllNotifyDeleted => {
                 self.is_deleting = false;
             }
-            Msg::NotifysFetched(Ok(c)) => {
+            NvMsg::NotifysFetched(Ok(c)) => {
                 self.is_fetching = false;
                 self.notify = Some(c);
             }
-            Msg::NotifysFetched(Err(e)) => {
+            NvMsg::NotifysFetched(Err(e)) => {
                 self.is_fetching = false;
                 let e = format!("Failed to fetch notify: {:?}", e);
                 error!(e);
                 self.error = Some(e);
             }
-            Msg::RetryFetchNotify => {
+            NvMsg::RetryFetchNotify => {
                 self.error = None;
                 self.is_fetching = true;
                 return Action::RetryFetchNotify;

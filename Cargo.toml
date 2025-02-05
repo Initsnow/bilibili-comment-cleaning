@@ -9,10 +9,13 @@ license = "GPL-3.0"
 iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = ["tokio", "image", "qr_code", "debug"] }
 indicatif = "0.17.8"
 regex = "1.10.6"
-reqwest = { version = "0.12.5", features = ["cookies", "json", "rustls-tls"] }
-serde = "1.0.204"
+reqwest = { version = "0.12.5", features = ["cookies", "json"] }
+serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.122"
 thiserror = "2.0.11"
 tokio = { version = "1.39.2", features = ["macros"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
+
+[profile.release]
+opt-level = "s"

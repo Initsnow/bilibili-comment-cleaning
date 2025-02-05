@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::error;
 
+#[derive(Debug)]
 pub struct DanmuViewer {
     pub danmu: Option<Arc<Mutex<HashMap<u64, Danmu>>>>,
     /// 删除请求间隔
@@ -26,7 +27,7 @@ pub struct DanmuViewer {
 }
 
 #[derive(Clone, Debug)]
-pub enum Msg {
+pub enum DvMsg {
     SecondsInputChanged(String),
     ChangeDanmuRemoveState(u64, bool),
     DanmusSelectAll,
@@ -50,7 +51,7 @@ impl DanmuViewer {
         }
     }
 
-    pub fn view(&self) -> Element<Msg> {
+    pub fn view(&self) -> Element<DvMsg> {
         if let Some(comments) = &self.danmu {
             let a = {
                 let guard = comments.blocking_lock();
@@ -65,34 +66,34 @@ impl DanmuViewer {
             let cl = column(a.into_iter().map(|(id, i)| {
                 checkbox(i.content.to_string(), i.is_selected)
                     .text_shaping(text::Shaping::Advanced)
-                    .on_toggle(move |b| Msg::ChangeDanmuRemoveState(id, b))
+                    .on_toggle(move |b| DvMsg::ChangeDanmuRemoveState(id, b))
                     .into()
             }))
             .padding([0, 15]);
-            let comments = center(scrollable(cl).height(Length::Fill));
+            let comments = center(scrollable(cl).height(Length::Fill).width(Length::Fill));
 
             let control = row![
                 if self.select_state {
-                    button("select all").on_press(Msg::DanmusSelectAll)
+                    button("select all").on_press(DvMsg::DanmusSelectAll)
                 } else {
-                    button("deselect all").on_press(Msg::DanmusDeselectAll)
+                    button("deselect all").on_press(DvMsg::DanmusDeselectAll)
                 },
                 Space::with_width(Length::Fill),
                 row![
                     tooltip(
                         text_input("0", &self.sleep_seconds)
                             .align_x(Alignment::Center)
-                            .on_input(Msg::SecondsInputChanged)
-                            .on_submit(Msg::DeleteDanmu)
+                            .on_input(DvMsg::SecondsInputChanged)
+                            .on_submit(DvMsg::DeleteDanmu)
                             .width(Length::Fixed(33.0)),
                         "Sleep seconds",
                         tooltip::Position::FollowCursor
                     ),
                     text("s"),
                     if self.is_deleting {
-                        button("stop").on_press(Msg::StopDeleteDanmu)
+                        button("stop").on_press(DvMsg::StopDeleteDanmu)
                     } else {
-                        button("remove").on_press(Msg::DeleteDanmu)
+                        button("remove").on_press(DvMsg::DeleteDanmu)
                     }
                 ]
                 .spacing(5)
@@ -101,7 +102,7 @@ impl DanmuViewer {
             .height(Length::Shrink);
 
             center(
-                iced::widget::column![head, comments.width(Length::FillPortion(3)), control]
+                iced::widget::column![head, comments, control]
                     .align_x(Alignment::Center)
                     .spacing(10),
             )
@@ -122,7 +123,7 @@ impl DanmuViewer {
                 .push_maybe(
                     self.error
                         .as_ref()
-                        .map(|_| button("Retry").on_press(Msg::RetryFetchDanmu)),
+                        .map(|_| button("Retry").on_press(DvMsg::RetryFetchDanmu)),
                 )
                 .align_x(Alignment::Center)
                 .spacing(4),
@@ -131,9 +132,9 @@ impl DanmuViewer {
         }
     }
 
-    pub fn update(&mut self, msg: Msg) -> Action {
+    pub fn update(&mut self, msg: DvMsg) -> Action {
         match msg {
-            Msg::ChangeDanmuRemoveState(id, b) => {
+            DvMsg::ChangeDanmuRemoveState(id, b) => {
                 let a = Arc::clone(self.danmu.as_ref().unwrap());
                 return Action::Run(Task::perform(
                     async move {
@@ -144,7 +145,7 @@ impl DanmuViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::DanmusSelectAll => {
+            DvMsg::DanmusSelectAll => {
                 let a = Arc::clone(self.danmu.as_ref().unwrap());
                 self.select_state = false;
                 return Action::Run(Task::perform(
@@ -157,7 +158,7 @@ impl DanmuViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::DanmusDeselectAll => {
+            DvMsg::DanmusDeselectAll => {
                 let a = Arc::clone(self.danmu.as_ref().unwrap());
                 self.select_state = true;
                 return Action::Run(Task::perform(
@@ -170,13 +171,13 @@ impl DanmuViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::DeleteDanmu => {
+            DvMsg::DeleteDanmu => {
                 return Action::DeleteDanmu {
                     danmu: self.danmu.as_ref().unwrap().clone(),
                     sleep_seconds: self.sleep_seconds.parse::<f32>().unwrap_or(0.0),
                 };
             }
-            Msg::DanmuDeleted { id } => {
+            DvMsg::DanmuDeleted { id } => {
                 let a = Arc::clone(self.danmu.as_ref().unwrap());
                 return Action::Run(Task::perform(
                     async move {
@@ -185,24 +186,24 @@ impl DanmuViewer {
                     main::Message::RefreshUI,
                 ));
             }
-            Msg::SecondsInputChanged(v) => {
+            DvMsg::SecondsInputChanged(v) => {
                 self.sleep_seconds = v;
             }
-            Msg::StopDeleteDanmu => return Action::SendtoChannel(ChannelMsg::StopDeleteComment),
-            Msg::AllDanmuDeleted => {
+            DvMsg::StopDeleteDanmu => return Action::SendtoChannel(ChannelMsg::StopDeleteComment),
+            DvMsg::AllDanmuDeleted => {
                 self.is_deleting = false;
             }
-            Msg::DanmusFetched(Ok(c)) => {
+            DvMsg::DanmusFetched(Ok(c)) => {
                 self.is_fetching = false;
                 self.danmu = Some(c);
             }
-            Msg::DanmusFetched(Err(e)) => {
+            DvMsg::DanmusFetched(Err(e)) => {
                 self.is_fetching = false;
                 let e = format!("Failed to fetch danmu: {:?}", e);
                 error!(e);
                 self.error = Some(e);
             }
-            Msg::RetryFetchDanmu => {
+            DvMsg::RetryFetchDanmu => {
                 self.error = None;
                 self.is_fetching = true;
                 return Action::RetryFetchDanmu;

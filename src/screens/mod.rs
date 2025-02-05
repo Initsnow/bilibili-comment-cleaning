@@ -6,7 +6,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 pub mod cookie;
-pub mod fetching;
 pub mod main;
 pub mod qrcode;
 
@@ -28,8 +27,6 @@ pub enum Screen {
 
 impl Screen {
     pub fn new(aicu_state: Arc<AtomicBool>) -> Self {
-        //todo:
-        // Screen::WaitScanQRcode(QRCode::new(aicu_state).0)
-        Screen::WaitingForInputCookie(Cookie::new(aicu_state))
+        Screen::WaitScanQRcode(QRCode::new(aicu_state).0)
     }
 }

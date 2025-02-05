@@ -37,7 +37,9 @@ impl fmt::Debug for Main {
         f.debug_struct("Main")
             .field("panes", &"<HIDDEN>")
             .field("focus", &self.focus)
-            // todo: other fields
+            .field("cv", &self.cv)
+            .field("nv", &self.nv)
+            .field("dv", &self.dv)
             .finish()
     }
 }
@@ -56,9 +58,9 @@ pub enum Message {
     PaneRestore,
     PaneClicked(pane_grid::Pane),
 
-    CommentMsg(comment_viewer::Msg),
-    NotifyMsg(notify_viewer::Msg),
-    DanmuMsg(danmu_viewer::Msg),
+    CommentMsg(comment_viewer::CvMsg),
+    NotifyMsg(notify_viewer::NvMsg),
+    DanmuMsg(danmu_viewer::DvMsg),
 
     RefreshUI(()),
 }

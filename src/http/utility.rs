@@ -1,5 +1,6 @@
 use crate::types::{ChannelMsg, Message, Result};
 use reqwest::{header, Client, IntoUrl};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -22,6 +23,40 @@ pub async fn get_uid(cl: Arc<Client>) -> Result<u64> {
     Ok(uid)
 }
 
+pub async fn fetch_data<T: DeserializeOwned>(cl: Arc<Client>, url: impl IntoUrl) -> Result<T> {
+    let res = cl.get(url).send().await?.error_for_status()?;
+    debug!("{:?}", &res);
+    Ok(res.json().await?)
+}
+
+pub mod video_info {
+    use crate::types::Result;
+    use reqwest::Client;
+    use serde::Deserialize;
+    use std::sync::Arc;
+    pub async fn get_cid(cl: Arc<Client>, av: u64) -> Result<Option<u64>> {
+        Ok(cl
+            .get("https://api.bilibili.com/x/player/pagelist")
+            .query(&[("aid", av)])
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<PageList>()
+            .await?
+            .data
+            .and_then(|e| Some(e[0].cid)))
+    }
+    #[derive(Deserialize)]
+    struct PageList {
+        data: Option<Vec<Item>>,
+    }
+    #[derive(Deserialize)]
+    struct Item {
+        cid: u64,
+        // snip
+    }
+}
+
 pub async fn create_client(ck: String) -> Result<(Client, String)> {
     let a = ck
         .find("bili_jct=")
@@ -37,7 +72,6 @@ pub async fn create_client(ck: String) -> Result<(Client, String)> {
     let cl = Client::builder()
         .default_headers(headers)
         .cookie_store(true)
-        .use_rustls_tls()
         .build()?;
 
     Ok((cl, csrf.to_string()))
