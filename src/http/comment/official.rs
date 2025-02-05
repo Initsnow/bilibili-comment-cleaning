@@ -2,19 +2,15 @@ use crate::http::comment::Comment;
 use crate::http::response::official::*;
 use crate::http::utility::fetch_data;
 use crate::types::{Error, Result};
-use iced::futures::future::try_join;
 use indicatif::ProgressBar;
 use regex::Regex;
-use reqwest::{Client, IntoUrl};
-use serde::de::DeserializeOwned;
-use serde::Deserialize;
-use serde_json::to_string;
+use reqwest::{Client};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 use tokio::try_join;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 static VIDEO_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"bilibili://video/(\d+)").unwrap());
@@ -29,7 +25,7 @@ fn parse_oid(detail: &NestedDetail) -> Result<(u64, u8)> {
         let oid = uri.replace("https://t.bilibili.com/", "").parse()?;
         // 我不知道半年前的我是怎么写出来这段神b代码的
         let tp = if business_id != 0 { business_id } else { 17 };
-        return Ok((oid, tp));
+        Ok((oid, tp))
     } else if uri.contains("https://h.bilibili.com/ywh/") {
         // 带图动态内评论
         let oid = uri.replace("https://h.bilibili.com/ywh/", "").parse()?;
@@ -102,6 +98,8 @@ async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
                             rpid,
                             Comment::new_with_notify(oid, r#type, content, notify_id, 0),
                         );
+                        pb.set_message(format!("Fetched liked comment: {rpid}. Counts now: {}",h.len()));
+                        pb.tick();
                     }
                     Err(e) => {
                         warn!("{:?}", e);
@@ -156,6 +154,8 @@ async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
                             rpid,
                             Comment::new_with_notify(oid, r#type, content, notify_id, 1),
                         );
+                        pb.set_message(format!("Fetched replyed comment: {rpid}. Counts now: {}",h.len()));
+                        pb.tick();
                     }
                     Err(e) => {
                         warn!("{:?}", e);

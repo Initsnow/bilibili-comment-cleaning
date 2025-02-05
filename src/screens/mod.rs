@@ -1,7 +1,7 @@
 use crate::screens::cookie::Cookie;
 use crate::screens::main::Main;
 use crate::screens::qrcode::QRCode;
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -15,15 +15,6 @@ pub enum Screen {
     WaitingForInputCookie(Cookie),
     Main(Main),
 }
-
-// impl Default for Screen {
-//     fn default() -> Self {
-//         Screen::WaitScanQRcode(QRCode::default())
-//     }
-//     // fn default() -> Self {
-//     //     Screen::Main(Main::new())
-//     // }
-// }
 
 impl Screen {
     pub fn new(aicu_state: Arc<AtomicBool>) -> Self {

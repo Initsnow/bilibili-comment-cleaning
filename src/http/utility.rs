@@ -1,4 +1,4 @@
-use crate::types::{ChannelMsg, Message, Result};
+use crate::types::{Result};
 use reqwest::{header, Client, IntoUrl};
 use serde::de::DeserializeOwned;
 use serde_json::Value;

@@ -3,13 +3,14 @@ use crate::http::response::official::like::ApiResponse;
 use crate::http::utility::fetch_data;
 use crate::types::Result;
 use iced::futures::stream::try_unfold;
-use iced::futures::{stream, FutureExt, Stream, StreamExt, TryStreamExt};
+use iced::futures::{Stream, TryStreamExt};
+use indicatif::ProgressBar;
 use regex::Regex;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{info};
 
 fn extract_cid(native_uri: &str) -> Option<u64> {
     let re = Regex::new(r"cid=(\d+)").unwrap();
@@ -27,14 +28,10 @@ fn create_liked_danmu_stream(client: Arc<Client>) -> impl Stream<Item = Result<V
             let client = client.clone();
             async move {
                 let url = url.unwrap();
-                debug!("Fetching: {:?}", &url);
                 let response = fetch_data::<ApiResponse>(client, &url).await?;
                 let data = response.data;
-                debug!("Fetched data: {:?}", data);
 
                 let mut results = vec![];
-                let mut last_time = None;
-                let mut query_id = None;
 
                 for item in data.total.items {
                     if item.item.nested.item_type == "danmu" {
@@ -43,18 +40,19 @@ fn create_liked_danmu_stream(client: Arc<Client>) -> impl Stream<Item = Result<V
                                 .push((item.item.item_id, Danmu::new(item.item.nested.title, cid)));
                         }
                     }
-                    last_time = Some(item.like_time);
                 }
 
                 if data.total.cursor.is_end {
                     return Ok(None);
                 }
 
-                query_id = Some(data.total.cursor.id);
+                let cursor_time = data.total.cursor.time;
+                let cursor_id = data.total.cursor.id;
+
                 let next_url = format!(
-                "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",
-                query_id.unwrap(), last_time.unwrap()
-            );
+                    "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",
+                    cursor_id, cursor_time
+                );
 
                 Ok(Some((results, Some(next_url))))
             }
@@ -64,15 +62,18 @@ fn create_liked_danmu_stream(client: Arc<Client>) -> impl Stream<Item = Result<V
 
 pub async fn fetch(client: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> {
     let map = Arc::new(Mutex::new(HashMap::new()));
+    let pb = ProgressBar::new_spinner();
 
     let stream = create_liked_danmu_stream(client.clone());
     stream
         .try_for_each_concurrent(3, |e| {
             let map_cloned = map.clone();
+            let pb = pb.clone();
             async move {
                 for (item_id, danmu) in e {
-                    info!("Fetched danmu {item_id}");
                     map_cloned.lock().await.insert(item_id, danmu);
+                    pb.set_message(format!("Fetched danmu from official: {}.", item_id));
+                    pb.tick();
                 }
                 Ok(())
             }

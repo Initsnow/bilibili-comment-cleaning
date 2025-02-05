@@ -1,11 +1,9 @@
 use crate::screens::{main, Screen};
 use bilibili_comment_cleaning::http::notify;
 use bilibili_comment_cleaning::http::qr_code::QRdata;
-use bilibili_comment_cleaning::http::utility::create_client;
 use bilibili_comment_cleaning::http::{comment, danmu};
 use bilibili_comment_cleaning::types::*;
 use bilibili_comment_cleaning::*;
-use bilibili_comment_cleaning::{cvmsg, dvmsg, nvmsg};
 use iced::{Element, Subscription, Task};
 use reqwest::{header, Client};
 use screens::{cookie, qrcode};
@@ -13,7 +11,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::spawn;
 use tokio::sync::mpsc::Sender;
-use tracing::info;
 
 static TAFFY: &[u8] = include_bytes!("assets/taffy.png");
 

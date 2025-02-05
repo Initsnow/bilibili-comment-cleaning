@@ -1,16 +1,14 @@
 use super::utility::{fetch_data, get_json};
-use crate::http::comment::Comment;
-use crate::http::notify;
 use crate::http::response::official::{like, reply};
 use crate::nvmsg;
 use crate::screens::main;
 use crate::types::{Message, RemoveAble, Result};
 use iced::Task;
-use reqwest::{Client, Url};
+use reqwest::{Client};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::mem;
 use std::sync::Arc;
+use indicatif::ProgressBar;
 use tokio::sync::Mutex;
 use tokio::try_join;
 use tracing::{error, info, instrument};
@@ -133,6 +131,7 @@ pub async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     let mut m: HashMap<u64, Notify> = HashMap::new();
     let mut cursor_id = None;
     let mut cursor_time = None;
+    let pb = ProgressBar::new_spinner();
 
     loop {
         let res;
@@ -161,7 +160,8 @@ pub async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
                     0,
                 ),
             );
-            info!("Fetched notify {}", i.id);
+            pb.set_message(format!("Fetched liked notify: {}. Counts now: {}",i.id,m.len()));
+            pb.tick();
         }
         if res.cursor.is_end {
             info!("被点赞的通知处理完毕。");
@@ -175,6 +175,7 @@ pub async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     let mut m: HashMap<u64, Notify> = HashMap::new();
     let mut cursor_id = None;
     let mut cursor_time = None;
+    let pb = ProgressBar::new_spinner();
 
     loop {
         let res;
@@ -202,7 +203,8 @@ pub async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
                     1,
                 ),
             );
-            info!("Fetched notify {}", i.id);
+            pb.set_message(format!("Fetched replyed notify: {}. Counts now: {}",i.id,m.len()));
+            pb.tick();
         }
         if res.cursor.is_end {
             info!("被评论的通知处理完毕。");
@@ -216,6 +218,7 @@ pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     let mut m: HashMap<u64, Notify> = HashMap::new();
     let mut cursor_id = None;
     let mut cursor_time = None;
+    let pb = ProgressBar::new_spinner();
 
     loop {
         let res;
@@ -251,7 +254,8 @@ pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
                     2,
                 ),
             );
-            info!("Fetched notify {}", i.id);
+            pb.set_message(format!("Fetched ated notify: {}. Counts now: {}",i.id,m.len()));
+            pb.tick();
         }
         if res.cursor.is_end {
             info!("被At的通知处理完毕。");
@@ -269,9 +273,11 @@ pub async fn fetch_system_notify(
     let mut h: HashMap<u64, Notify> = HashMap::new();
     let mut cursor = None;
     let mut api_type = 0_u8;
+    let pb = ProgressBar::new_spinner();
+
     loop {
-        let mut json: serde_json::Value;
-        let mut notifys: &serde_json::Value;
+        let mut json: Value;
+        let mut notifys: &Value;
         // first get
         if cursor.is_none() {
             json = get_json(
@@ -320,7 +326,8 @@ pub async fn fetch_system_notify(
                     api_type,
                 ),
             );
-            info!("Fetched notify {notify_id}");
+            pb.set_message(format!("Fetched system notify: {}. Counts now: {}",notify_id,h.len()));
+            pb.tick();
         }
     }
     Ok(h)

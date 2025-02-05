@@ -3,7 +3,7 @@ use crate::http::response::aicu::comment::ApiResponse;
 use crate::http::utility::{fetch_data, get_uid};
 use crate::types::Result;
 use indicatif::ProgressBar;
-use reqwest::{Client, IntoUrl};
+use reqwest::{Client};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

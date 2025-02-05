@@ -7,21 +7,17 @@ use crate::http::danmu::Danmu;
 use crate::http::notify::Notify;
 use crate::screens::main::danmu_viewer::DanmuViewer;
 use crate::screens::main::notify_viewer::NotifyViewer;
-use crate::types::{ChannelMsg, Result};
+use crate::types::ChannelMsg;
 use comment_viewer::CommentViewer;
 use iced::{
     widget::{button, container, pane_grid, row, text},
     Element,
 };
-use iced::{
-    widget::{center, checkbox, column, scrollable, text_input, tooltip, Space},
-    Alignment, Length, Task,
-};
+use iced::Task;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::error;
 
 pub struct Main {
     panes: pane_grid::State<Pane>,
@@ -226,7 +222,6 @@ mod style {
                 width: 2.0,
                 color: palette.background.strong.color,
                 radius: 3.0.into(),
-                ..Border::default()
             },
             ..Default::default()
         }
@@ -241,7 +236,6 @@ mod style {
                 width: 2.0,
                 color: palette.primary.strong.color,
                 radius: 3.0.into(),
-                ..Border::default()
             },
             ..Default::default()
         }

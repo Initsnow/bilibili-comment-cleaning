@@ -2,15 +2,13 @@ pub mod aicu;
 pub mod official;
 
 use crate::cvmsg;
-use crate::http::comment;
 use crate::http::notify::Notify;
 use crate::http::utility::{get_json, get_uid};
 use crate::screens::main;
 use crate::types::{Message, RemoveAble, Result};
 use iced::Task;
 use indicatif::ProgressBar;
-use regex::Regex;
-use reqwest::{Client, Url};
+use reqwest::{Client};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::mem;
@@ -19,7 +17,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio::try_join;
-use tracing::{error, info, warn};
+use tracing::{error};
 
 #[derive(Debug, Default, Clone)]
 pub struct Comment {
@@ -138,7 +136,7 @@ pub async fn fetch_from_aicu(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, C
             h.insert(
                 rpid,
                 Comment::new(
-                    i["dyn"]["oid"].as_str().unwrap().parse().unwrap(),
+                    i["dyn"]["oid"].as_str().unwrap().parse()?,
                     i["dyn"]["type"].as_u64().unwrap() as u8,
                     i["message"].as_str().unwrap().to_string(),
                 ),
@@ -163,8 +161,8 @@ pub async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Commen
         let mut lock1 = m1.lock().await;
         let mut lock2 = m2.lock().await;
         (
-            mem::replace(&mut *lock1, HashMap::new()),
-            mem::replace(&mut *lock2, HashMap::new()),
+            mem::take(&mut *lock1),
+            mem::take(&mut *lock2),
         )
     };
 

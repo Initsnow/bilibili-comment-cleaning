@@ -1,7 +1,6 @@
-use crate::http::{danmu, notify};
 use crate::screens::main;
 use crate::types::{Message, RemoveAble, Result};
-use crate::{dvmsg, nvmsg};
+use crate::{dvmsg};
 use iced::Task;
 use reqwest::Client;
 use serde_json::Value;
@@ -72,8 +71,8 @@ async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> 
         let mut lock1 = m1.lock().await;
         let mut lock2 = m2.lock().await;
         (
-            mem::replace(&mut *lock1, HashMap::new()),
-            mem::replace(&mut *lock2, HashMap::new()),
+            mem::take(&mut *lock1),
+            mem::take(&mut *lock2),
         )
     };
 
