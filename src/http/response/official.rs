@@ -31,7 +31,7 @@ pub mod like {
 
     #[derive(Deserialize, Debug)]
     pub struct Total {
-        pub cursor: Cursor,
+        pub cursor: Option<Cursor>,
         pub items: Vec<Item>,
     }
 
@@ -60,7 +60,7 @@ pub mod reply {
     }
     #[derive(Deserialize, Debug)]
     pub struct Data {
-        pub cursor: Cursor,
+        pub cursor: Option<Cursor>,
         pub items: Vec<Item>,
     }
 
@@ -91,7 +91,7 @@ pub mod at {
     }
     #[derive(Deserialize, Debug)]
     pub struct Data {
-        pub cursor: Cursor,
+        pub cursor: Option<Cursor>,
         pub items: Vec<Item>,
     }
 

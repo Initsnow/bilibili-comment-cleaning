@@ -3,19 +3,15 @@ pub mod official;
 
 use crate::cvmsg;
 use crate::http::notify::Notify;
-use crate::http::utility::{get_json, get_uid};
 use crate::screens::main;
 use crate::types::{Message, RemoveAble, Result};
 use iced::Task;
-use indicatif::ProgressBar;
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
-use tokio::time::sleep;
 use tokio::try_join;
 use tracing::error;
 
@@ -90,7 +86,7 @@ impl RemoveAble for Comment {
             Ok(rpid)
         } else {
             let e = format!("Can't remove comment. Response json: {}", json_res);
-            error!(e);
+            error!("{:?}",e);
             Err(e.into())
         }
     }

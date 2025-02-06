@@ -1,4 +1,5 @@
 use crate::dvmsg;
+use crate::http::notify::Notify;
 use crate::screens::main;
 use crate::types::{Message, RemoveAble, Result};
 use iced::Task;
@@ -9,7 +10,7 @@ use std::mem;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::try_join;
-use tracing::{error, info};
+use tracing::error;
 
 pub mod aicu;
 pub mod official;
@@ -20,6 +21,7 @@ pub struct Danmu {
     cid: u64,
     // r#type: u8,
     pub is_selected: bool,
+    pub notify_id: Option<u64>,
 }
 impl Danmu {
     fn new(content: String, cid: u64) -> Danmu {
@@ -27,6 +29,15 @@ impl Danmu {
             content,
             cid,
             is_selected: true,
+            notify_id: None,
+        }
+    }
+    fn new_with_notify(content: String, cid: u64, notify_id: u64) -> Danmu {
+        Danmu {
+            content,
+            cid,
+            is_selected: true,
+            notify_id: Some(notify_id),
         }
     }
 }
@@ -54,10 +65,15 @@ impl RemoveAble for Danmu {
             .ok_or("Remove Danmu: Parse json res code failed")?
             == 0
         {
+            if let Some(notify_id) = self.notify_id {
+                Notify::new(String::new(), 0)
+                    .remove(notify_id, cl, csrf)
+                    .await?;
+            }
             Ok(dmid)
         } else {
             let e = format!("Can't remove danmu. Response json: {}", json_res);
-            error!(e);
+            error!("{:?}",e);
             Err(e.into())
         }
     }

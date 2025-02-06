@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::try_join;
-use tracing::{error, info, instrument};
+use tracing::{error, info, warn};
 
 #[derive(Clone, Debug)]
 pub struct Notify {
@@ -67,7 +67,7 @@ impl RemoveAble for Notify {
                         "Can't remove the system notify. Response json: {}",
                         json_res
                     );
-                    error!(e);
+                    error!("{:?}",e);
                     Err(e.into())
                 }
             }
@@ -98,7 +98,7 @@ impl RemoveAble for Notify {
                     Ok(id)
                 } else {
                     let e = format!("Can't remove notify. Response json: {}", json_res);
-                    error!(e);
+                    error!("{:?}",e);
                     Err(e.into())
                 }
             }
@@ -132,23 +132,24 @@ pub async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     let pb = ProgressBar::new_spinner();
 
     loop {
-        let res;
-        if cursor_id.is_none() && cursor_time.is_none() {
+        let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            res = fetch_data::<like::ApiResponse>(
+            fetch_data::<like::ApiResponse>(
                 cl.clone(),
                 "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
             )
             .await?
             .data
-            .total;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            .total
         } else {
-            res=fetch_data::<like::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
-                .await?.data.total;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            fetch_data::<like::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
+                .await?.data.total
+        };
+        if let Some(c) = &res.cursor {
+            cursor_id = Some(c.id);
+            cursor_time = Some(c.time);
+        } else {
+            return Ok(m);
         }
         for i in res.items {
             m.insert(
@@ -165,7 +166,7 @@ pub async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
             ));
             pb.tick();
         }
-        if res.cursor.is_end {
+        if res.cursor.unwrap().is_end {
             info!("被点赞的通知处理完毕。");
             break;
         }
@@ -180,22 +181,23 @@ pub async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     let pb = ProgressBar::new_spinner();
 
     loop {
-        let res;
-        if cursor_id.is_none() && cursor_time.is_none() {
+        let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            res = fetch_data::<reply::ApiResponse>(
+            fetch_data::<reply::ApiResponse>(
                 cl.clone(),
                 "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web",
             )
             .await?
-            .data;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            .data
         } else {
-            res=fetch_data::<reply::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web&id={}&reply_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
-                .await?.data;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            fetch_data::<reply::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web&id={}&reply_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
+                .await?.data
+        };
+        if let Some(c) = &res.cursor {
+            cursor_id = Some(c.id);
+            cursor_time = Some(c.time);
+        } else {
+            return Ok(m);
         }
         for i in res.items {
             m.insert(
@@ -212,7 +214,7 @@ pub async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
             ));
             pb.tick();
         }
-        if res.cursor.is_end {
+        if res.cursor.unwrap().is_end {
             info!("被评论的通知处理完毕。");
             break;
         }
@@ -227,19 +229,16 @@ pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     let pb = ProgressBar::new_spinner();
 
     loop {
-        let res;
-        if cursor_id.is_none() && cursor_time.is_none() {
+        let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            res = fetch_data::<reply::ApiResponse>(
+            fetch_data::<reply::ApiResponse>(
                 cl.clone(),
                 "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
             )
             .await?
-            .data;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            .data
         } else {
-            res = fetch_data::<reply::ApiResponse>(
+            fetch_data::<reply::ApiResponse>(
                 cl.clone(),
                 format!(
                     "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web&id={}&at_time={}",
@@ -248,9 +247,13 @@ pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
                 ),
             )
             .await?
-            .data;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            .data
+        };
+        if let Some(c) = &res.cursor {
+            cursor_id = Some(c.id);
+            cursor_time = Some(c.time);
+        } else {
+            return Ok(m);
         }
         for i in res.items {
             m.insert(
@@ -267,7 +270,7 @@ pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
             ));
             pb.tick();
         }
-        if res.cursor.is_end {
+        if res.cursor.unwrap().is_end {
             info!("被At的通知处理完毕。");
             break;
         }
@@ -303,8 +306,8 @@ pub async fn fetch_system_notify(
                 // 两者都为空
                 if notifys.is_null() {
                     let i = "没有系统通知。";
-                    info!(i);
-                    return Err(i.into());
+                    warn!("{}", i);
+                    return Ok(h);
                 }
             }
             cursor = notifys.as_array().unwrap().last().unwrap()["cursor"].as_u64();

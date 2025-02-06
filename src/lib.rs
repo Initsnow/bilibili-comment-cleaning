@@ -67,6 +67,7 @@ async fn handle_delete<T>(
     for (index, item) in items.into_iter().enumerate() {
         let (id, data) = item;
         if !delete_flag.load(Ordering::SeqCst) {
+            delete_flag.store(true, Ordering::SeqCst);
             output.send(msg_done.clone()).await.unwrap();
             break;
         }

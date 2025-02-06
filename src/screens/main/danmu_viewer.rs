@@ -1,7 +1,7 @@
 use crate::http::danmu::Danmu;
-use crate::main;
 use crate::main::Action;
 use crate::types::{ChannelMsg, Result};
+use crate::{main, nvmsg};
 use iced::widget::{
     button, center, checkbox, column, row, scrollable, text, text_input, tooltip, Space,
 };
@@ -39,6 +39,12 @@ pub enum DvMsg {
     DanmusFetched(Result<Arc<Mutex<HashMap<u64, Danmu>>>>),
     RetryFetchDanmu,
 }
+impl Default for DanmuViewer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DanmuViewer {
     pub fn new() -> Self {
         DanmuViewer {
@@ -57,16 +63,21 @@ impl DanmuViewer {
                 let guard = comments.blocking_lock();
                 guard.clone()
             };
+            let select_count = a.values().filter(|e| e.is_selected).count();
 
             let head = text(format!(
                 "{} selected out of {} total",
-                a.values().filter(|e| e.is_selected).count(),
+                select_count,
                 a.len()
             ));
             let cl = column(a.into_iter().map(|(id, i)| {
                 checkbox(i.content.to_string(), i.is_selected)
                     .text_shaping(text::Shaping::Advanced)
-                    .on_toggle(move |b| DvMsg::ChangeDanmuRemoveState(id, b))
+                    .on_toggle_maybe(if !self.is_deleting {
+                        Some(move |b| DvMsg::ChangeDanmuRemoveState(id, b))
+                    } else {
+                        None
+                    })
                     .into()
             }))
             .padding([0, 15]);
@@ -74,17 +85,21 @@ impl DanmuViewer {
 
             let control = row![
                 if self.select_state {
-                    button("select all").on_press(DvMsg::DanmusSelectAll)
+                    button("select all")
+                        .on_press_maybe((!self.is_deleting).then_some(DvMsg::DanmusSelectAll))
                 } else {
-                    button("deselect all").on_press(DvMsg::DanmusDeselectAll)
+                    button("deselect all")
+                        .on_press_maybe((!self.is_deleting).then_some(DvMsg::DanmusDeselectAll))
                 },
                 Space::with_width(Length::Fill),
                 row![
                     tooltip(
                         text_input("0", &self.sleep_seconds)
                             .align_x(Alignment::Center)
-                            .on_input(DvMsg::SecondsInputChanged)
-                            .on_submit(DvMsg::DeleteDanmu)
+                            .on_input_maybe(
+                                (!self.is_deleting).then_some(DvMsg::SecondsInputChanged)
+                            )
+                            .on_submit_maybe((!self.is_deleting).then_some(DvMsg::DeleteDanmu))
                             .width(Length::Fixed(33.0)),
                         "Sleep seconds",
                         tooltip::Position::FollowCursor
@@ -93,7 +108,11 @@ impl DanmuViewer {
                     if self.is_deleting {
                         button("stop").on_press(DvMsg::StopDeleteDanmu)
                     } else {
-                        button("remove").on_press(DvMsg::DeleteDanmu)
+                        button("remove").on_press_maybe(if select_count != 0 {
+                            Some(DvMsg::DeleteDanmu)
+                        } else {
+                            None
+                        })
                     }
                 ]
                 .spacing(5)
@@ -112,12 +131,10 @@ impl DanmuViewer {
             center(scrollable(
                 column![text(if self.is_fetching {
                     "Fetching..."
+                } else if let Some(e) = &self.error {
+                    e
                 } else {
-                    if let Some(e) = &self.error {
-                        e
-                    } else {
-                        "None 😭"
-                    }
+                    "None 😭"
                 })
                 .shaping(text::Shaping::Advanced)]
                 .push_maybe(
@@ -181,16 +198,20 @@ impl DanmuViewer {
             DvMsg::DanmuDeleted { id } => {
                 let a = Arc::clone(self.danmu.as_ref().unwrap());
                 return Action::Run(Task::perform(
-                    async move {
-                        a.lock().await.remove(&id);
+                    async move { a.lock().await.remove(&id).unwrap() },
+                    |e| {
+                        if let Some(i) = e.notify_id {
+                            main::Message::NotifyMsg(nvmsg::NotifyDeleted { id: i })
+                        } else {
+                            main::Message::RefreshUI(())
+                        }
                     },
-                    main::Message::RefreshUI,
                 ));
             }
             DvMsg::SecondsInputChanged(v) => {
                 self.sleep_seconds = v;
             }
-            DvMsg::StopDeleteDanmu => return Action::SendtoChannel(ChannelMsg::StopDeleteComment),
+            DvMsg::StopDeleteDanmu => return Action::SendtoChannel(ChannelMsg::StopDeleteDanmu),
             DvMsg::AllDanmuDeleted => {
                 self.is_deleting = false;
             }
@@ -201,7 +222,7 @@ impl DanmuViewer {
             DvMsg::DanmusFetched(Err(e)) => {
                 self.is_fetching = false;
                 let e = format!("Failed to fetch danmu: {:?}", e);
-                error!(e);
+                error!("{:?}",e);
                 self.error = Some(e);
             }
             DvMsg::RetryFetchDanmu => {

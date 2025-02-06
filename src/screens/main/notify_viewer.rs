@@ -39,6 +39,12 @@ pub enum NvMsg {
     NotifysFetched(Result<Arc<Mutex<HashMap<u64, Notify>>>>),
     RetryFetchNotify,
 }
+impl Default for NotifyViewer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NotifyViewer {
     pub fn new() -> Self {
         NotifyViewer {
@@ -57,16 +63,21 @@ impl NotifyViewer {
                 let guard = comments.blocking_lock();
                 guard.clone()
             };
+            let select_count = a.values().filter(|e| e.is_selected).count();
 
             let head = text(format!(
                 "{} selected out of {} total",
-                a.values().filter(|e| e.is_selected).count(),
+                select_count,
                 a.len()
             ));
             let cl = column(a.into_iter().map(|(id, i)| {
                 checkbox(i.content.to_string(), i.is_selected)
                     .text_shaping(text::Shaping::Advanced)
-                    .on_toggle(move |b| NvMsg::ChangeNotifyRemoveState(id, b))
+                    .on_toggle_maybe(if !self.is_deleting {
+                        Some(move |b| NvMsg::ChangeNotifyRemoveState(id, b))
+                    } else {
+                        None
+                    })
                     .into()
             }))
             .padding([0, 15]);
@@ -74,17 +85,21 @@ impl NotifyViewer {
 
             let control = row![
                 if self.select_state {
-                    button("select all").on_press(NvMsg::NotifysSelectAll)
+                    button("select all")
+                        .on_press_maybe((!self.is_deleting).then_some(NvMsg::NotifysSelectAll))
                 } else {
-                    button("deselect all").on_press(NvMsg::NotifysDeselectAll)
+                    button("deselect all")
+                        .on_press_maybe((!self.is_deleting).then_some(NvMsg::NotifysDeselectAll))
                 },
                 Space::with_width(Length::Fill),
                 row![
                     tooltip(
                         text_input("0", &self.sleep_seconds)
                             .align_x(Alignment::Center)
-                            .on_input(NvMsg::SecondsInputChanged)
-                            .on_submit(NvMsg::DeleteNotify)
+                            .on_input_maybe(
+                                (!self.is_deleting).then_some(NvMsg::SecondsInputChanged)
+                            )
+                            .on_submit_maybe((!self.is_deleting).then_some(NvMsg::DeleteNotify))
                             .width(Length::Fixed(33.0)),
                         "Sleep seconds",
                         tooltip::Position::FollowCursor
@@ -93,7 +108,11 @@ impl NotifyViewer {
                     if self.is_deleting {
                         button("stop").on_press(NvMsg::StopDeleteNotify)
                     } else {
-                        button("remove").on_press(NvMsg::DeleteNotify)
+                        button("remove").on_press_maybe(if select_count != 0 {
+                            Some(NvMsg::DeleteNotify)
+                        } else {
+                            None
+                        })
                     }
                 ]
                 .spacing(5)
@@ -112,12 +131,10 @@ impl NotifyViewer {
             center(scrollable(
                 column![text(if self.is_fetching {
                     "Fetching..."
+                } else if let Some(e) = &self.error {
+                    e
                 } else {
-                    if let Some(e) = &self.error {
-                        e
-                    } else {
-                        "None 😭"
-                    }
+                    "None 😭"
                 })
                 .shaping(text::Shaping::Advanced)]
                 .push_maybe(
@@ -190,7 +207,7 @@ impl NotifyViewer {
             NvMsg::SecondsInputChanged(v) => {
                 self.sleep_seconds = v;
             }
-            NvMsg::StopDeleteNotify => return Action::SendtoChannel(ChannelMsg::StopDeleteComment),
+            NvMsg::StopDeleteNotify => return Action::SendtoChannel(ChannelMsg::StopDeleteNotify),
             NvMsg::AllNotifyDeleted => {
                 self.is_deleting = false;
             }
@@ -201,7 +218,7 @@ impl NotifyViewer {
             NvMsg::NotifysFetched(Err(e)) => {
                 self.is_fetching = false;
                 let e = format!("Failed to fetch notify: {:?}", e);
-                error!(e);
+                error!("{:?}",e);
                 self.error = Some(e);
             }
             NvMsg::RetryFetchNotify => {

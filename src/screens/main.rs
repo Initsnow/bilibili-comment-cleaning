@@ -199,6 +199,10 @@ mod style {
         container::Style {
             text_color: Some(palette.background.strong.text),
             background: Some(palette.background.strong.color.into()),
+            border: Border {
+                radius: 3.0.into(),
+                ..Border::default()
+            },
             ..Default::default()
         }
     }
@@ -209,6 +213,10 @@ mod style {
         container::Style {
             text_color: Some(palette.primary.strong.text),
             background: Some(palette.primary.strong.color.into()),
+            border: Border {
+                radius: 3.0.into(),
+                ..Border::default()
+            },
             ..Default::default()
         }
     }

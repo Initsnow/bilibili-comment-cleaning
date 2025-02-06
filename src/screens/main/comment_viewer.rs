@@ -39,6 +39,12 @@ pub enum CvMsg {
     CommentsFetched(crate::types::Result<Arc<Mutex<HashMap<u64, Comment>>>>),
     RetryFetchComment,
 }
+impl Default for CommentViewer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommentViewer {
     pub fn new() -> Self {
         CommentViewer {
@@ -57,16 +63,20 @@ impl CommentViewer {
                 let guard = comments.blocking_lock();
                 guard.clone()
             };
-
+            let select_count = a.values().filter(|e| e.is_selected).count();
             let head = text(format!(
                 "{} selected out of {} total",
-                a.values().filter(|e| e.is_selected).count(),
+                select_count,
                 a.len()
             ));
             let cl = column(a.into_iter().map(|(rpid, i)| {
                 checkbox(i.content.to_string(), i.is_selected)
                     .text_shaping(text::Shaping::Advanced)
-                    .on_toggle(move |b| CvMsg::ChangeCommentRemoveState(rpid, b))
+                    .on_toggle_maybe(if !self.is_deleting {
+                        Some(move |b| CvMsg::ChangeCommentRemoveState(rpid, b))
+                    } else {
+                        None
+                    })
                     .into()
             }))
             .padding([0, 15]);
@@ -74,17 +84,21 @@ impl CommentViewer {
 
             let control = row![
                 if self.select_state {
-                    button("select all").on_press(CvMsg::CommentsSelectAll)
+                    button("select all")
+                        .on_press_maybe((!self.is_deleting).then_some(CvMsg::CommentsSelectAll))
                 } else {
-                    button("deselect all").on_press(CvMsg::CommentsDeselectAll)
+                    button("deselect all")
+                        .on_press_maybe((!self.is_deleting).then_some(CvMsg::CommentsDeselectAll))
                 },
                 Space::with_width(Length::Fill),
                 row![
                     tooltip(
                         text_input("0", &self.sleep_seconds)
                             .align_x(Alignment::Center)
-                            .on_input(CvMsg::SecondsInputChanged)
-                            .on_submit(CvMsg::DeleteComment)
+                            .on_input_maybe(
+                                (!self.is_deleting).then_some(CvMsg::SecondsInputChanged)
+                            )
+                            .on_submit_maybe((!self.is_deleting).then_some(CvMsg::DeleteComment))
                             .width(Length::Fixed(33.0)),
                         "Sleep seconds",
                         tooltip::Position::FollowCursor
@@ -93,7 +107,11 @@ impl CommentViewer {
                     if self.is_deleting {
                         button("stop").on_press(CvMsg::StopDeleteComment)
                     } else {
-                        button("remove").on_press(CvMsg::DeleteComment)
+                        button("remove").on_press_maybe(if select_count != 0 {
+                            Some(CvMsg::DeleteComment)
+                        } else {
+                            None
+                        })
                     }
                 ]
                 .spacing(5)
@@ -112,12 +130,10 @@ impl CommentViewer {
             center(scrollable(
                 column![text(if self.is_fetching {
                     "Fetching..."
+                } else if let Some(e) = &self.error {
+                    e
                 } else {
-                    if let Some(e) = &self.error {
-                        e
-                    } else {
-                        "None 😭"
-                    }
+                    "None 😭"
                 })
                 .shaping(text::Shaping::Advanced)]
                 .push_maybe(
@@ -207,7 +223,7 @@ impl CommentViewer {
             CvMsg::CommentsFetched(Err(e)) => {
                 self.is_fetching = false;
                 let e = format!("Failed to fetch comments: {:?}", e);
-                error!(e);
+                error!("{:?}",e);
                 self.error = Some(e);
             }
             CvMsg::RetryFetchComment => {

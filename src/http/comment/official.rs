@@ -68,23 +68,24 @@ async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
     let pb = ProgressBar::new_spinner();
 
     loop {
-        let res;
-        if cursor_id.is_none() && cursor_time.is_none() {
+        let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            res = fetch_data::<like::ApiResponse>(
+            fetch_data::<like::ApiResponse>(
                 cl.clone(),
                 "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
             )
             .await?
             .data
-            .total;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            .total
         } else {
-            res=fetch_data::<like::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
-                .await?.data.total;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            fetch_data::<like::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
+                .await?.data.total
+        };
+        if let Some(c) = &res.cursor {
+            cursor_id = Some(c.id);
+            cursor_time = Some(c.time);
+        } else {
+            return Ok(h);
         }
         for item in res.items {
             let i = item.item;
@@ -110,7 +111,7 @@ async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
                 }
             }
         }
-        if res.cursor.is_end {
+        if res.cursor.unwrap().is_end {
             info!("被点赞的评论处理完毕。");
             break;
         }
@@ -124,22 +125,23 @@ async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
     let pb = ProgressBar::new_spinner();
 
     loop {
-        let res;
-        if cursor_id.is_none() && cursor_time.is_none() {
+        let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            res = fetch_data::<reply::ApiResponse>(
+            fetch_data::<reply::ApiResponse>(
                 cl.clone(),
                 "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web",
             )
             .await?
-            .data;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            .data
         } else {
-            res=fetch_data::<reply::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web&id={}&reply_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
-                .await?.data;
-            cursor_id = Some(res.cursor.id);
-            cursor_time = Some(res.cursor.time);
+            fetch_data::<reply::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web&id={}&reply_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
+                .await?.data
+        };
+        if let Some(c) = &res.cursor {
+            cursor_id = Some(c.id);
+            cursor_time = Some(c.time);
+        } else {
+            return Ok(h);
         }
         for item in res.items {
             let i = item.item;
@@ -169,7 +171,7 @@ async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
                 }
             }
         }
-        if res.cursor.is_end {
+        if res.cursor.unwrap().is_end {
             info!("被评论的评论处理完毕。");
             break;
         }

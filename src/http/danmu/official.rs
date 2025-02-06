@@ -27,7 +27,11 @@ fn create_liked_danmu_stream(client: Arc<Client>) -> impl Stream<Item = Result<V
         move |url| {
             let client = client.clone();
             async move {
-                let url = url.unwrap();
+                let url = if let Some(u) = url {
+                    u
+                } else {
+                    return Ok(None);
+                };
                 let response = fetch_data::<ApiResponse>(client, &url).await?;
                 let data = response.data;
 
@@ -36,18 +40,25 @@ fn create_liked_danmu_stream(client: Arc<Client>) -> impl Stream<Item = Result<V
                 for item in data.total.items {
                     if item.item.nested.item_type == "danmu" {
                         if let Some(cid) = extract_cid(&item.item.nested.native_uri) {
-                            results
-                                .push((item.item.item_id, Danmu::new(item.item.nested.title, cid)));
+                            results.push((
+                                item.item.item_id,
+                                Danmu::new_with_notify(item.item.nested.title, cid, item.id),
+                            ));
                         }
                     }
                 }
 
-                if data.total.cursor.is_end {
+                let cursor = if let Some(v) = data.total.cursor {
+                    v
+                } else {
                     return Ok(None);
+                };
+                if cursor.is_end {
+                    return Ok(Some((results, None)));
                 }
 
-                let cursor_time = data.total.cursor.time;
-                let cursor_id = data.total.cursor.id;
+                let cursor_time = cursor.time;
+                let cursor_id = cursor.id;
 
                 let next_url = format!(
                     "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",

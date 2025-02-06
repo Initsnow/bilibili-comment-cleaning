@@ -44,7 +44,7 @@ pub mod video_info {
             .json::<PageList>()
             .await?
             .data
-            .and_then(|e| Some(e[0].cid)))
+            .map(|e| e[0].cid))
     }
     #[derive(Deserialize)]
     struct PageList {
