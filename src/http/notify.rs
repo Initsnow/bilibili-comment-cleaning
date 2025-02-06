@@ -4,11 +4,11 @@ use crate::nvmsg;
 use crate::screens::main;
 use crate::types::{Message, RemoveAble, Result};
 use iced::Task;
-use reqwest::{Client};
+use indicatif::ProgressBar;
+use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use indicatif::ProgressBar;
 use tokio::sync::Mutex;
 use tokio::try_join;
 use tracing::{error, info, instrument};
@@ -61,7 +61,6 @@ impl RemoveAble for Notify {
                     .await
                     ?;
                 if json_res["code"].as_i64().unwrap() == 0 {
-                    info!("Remove system notify {id} successfully");
                     Ok(id)
                 } else {
                     let e = format!(
@@ -96,7 +95,6 @@ impl RemoveAble for Notify {
                     .ok_or("Remove Notify: Parse json res code failed")?
                     == 0
                 {
-                    info!("Remove notify {} successfully", id);
                     Ok(id)
                 } else {
                     let e = format!("Can't remove notify. Response json: {}", json_res);
@@ -160,7 +158,11 @@ pub async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
                     0,
                 ),
             );
-            pb.set_message(format!("Fetched liked notify: {}. Counts now: {}",i.id,m.len()));
+            pb.set_message(format!(
+                "Fetched liked notify: {}. Counts now: {}",
+                i.id,
+                m.len()
+            ));
             pb.tick();
         }
         if res.cursor.is_end {
@@ -203,7 +205,11 @@ pub async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
                     1,
                 ),
             );
-            pb.set_message(format!("Fetched replyed notify: {}. Counts now: {}",i.id,m.len()));
+            pb.set_message(format!(
+                "Fetched replyed notify: {}. Counts now: {}",
+                i.id,
+                m.len()
+            ));
             pb.tick();
         }
         if res.cursor.is_end {
@@ -254,7 +260,11 @@ pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
                     2,
                 ),
             );
-            pb.set_message(format!("Fetched ated notify: {}. Counts now: {}",i.id,m.len()));
+            pb.set_message(format!(
+                "Fetched ated notify: {}. Counts now: {}",
+                i.id,
+                m.len()
+            ));
             pb.tick();
         }
         if res.cursor.is_end {
@@ -265,7 +275,6 @@ pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     Ok(m)
 }
 
-#[instrument(skip_all)]
 pub async fn fetch_system_notify(
     cl: Arc<Client>,
     csrf: Arc<String>,
@@ -326,7 +335,11 @@ pub async fn fetch_system_notify(
                     api_type,
                 ),
             );
-            pb.set_message(format!("Fetched system notify: {}. Counts now: {}",notify_id,h.len()));
+            pb.set_message(format!(
+                "Fetched system notify: {}. Counts now: {}",
+                notify_id,
+                h.len()
+            ));
             pb.tick();
         }
     }

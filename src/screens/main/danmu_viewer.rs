@@ -172,6 +172,7 @@ impl DanmuViewer {
                 ));
             }
             DvMsg::DeleteDanmu => {
+                self.is_deleting = true;
                 return Action::DeleteDanmu {
                     danmu: self.danmu.as_ref().unwrap().clone(),
                     sleep_seconds: self.sleep_seconds.parse::<f32>().unwrap_or(0.0),

@@ -1,8 +1,8 @@
 use iced::futures::channel::mpsc::Sender;
 use iced::futures::SinkExt;
 use iced::{stream, Subscription};
-use indicatif::ProgressBar;
-use reqwest::{Client};
+use indicatif::{ProgressBar, ProgressStyle};
+use reqwest::Client;
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use tokio::spawn;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
-use tracing::{error};
+use tracing::error;
 
 pub mod http;
 pub mod screens;
@@ -56,7 +56,7 @@ async fn handle_delete<T>(
 
     let len = items.len();
     let pb = ProgressBar::new(len as u64);
-    pb.set_style(indicatif::ProgressStyle::default_bar());
+    pb.set_style(ProgressStyle::with_template("{wide_bar} {pos}/{len} {msg}").unwrap());
 
     let msg_done: Message = match tp {
         Type::Comment => cvmsg::AllCommentDeleted.into(),
@@ -90,10 +90,9 @@ async fn handle_delete<T>(
                     .unwrap();
                 pb.set_message(format!("已删除{}：{}", tp, id));
                 pb.inc(1);
-                pb.inc(1);
             }
             Err(err) => {
-                eprintln!("Error: {}", err);
+                error!("Error: {}", err);
             }
         }
 

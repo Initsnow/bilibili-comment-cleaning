@@ -9,11 +9,11 @@ use crate::screens::main::danmu_viewer::DanmuViewer;
 use crate::screens::main::notify_viewer::NotifyViewer;
 use crate::types::ChannelMsg;
 use comment_viewer::CommentViewer;
+use iced::Task;
 use iced::{
     widget::{button, container, pane_grid, row, text},
     Element,
 };
-use iced::Task;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;

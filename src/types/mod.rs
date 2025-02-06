@@ -16,8 +16,6 @@ use tracing::error;
 #[derive(Debug, Clone)]
 pub enum Message {
     ChannelConnected(Sender<ChannelMsg>),
-    AicuFetchingState { now: f32, max: f32 },
-    OfficialFetchingState(String),
     RefreshUI(()),
 
     Cookie(cookie::Message),

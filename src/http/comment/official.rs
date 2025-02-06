@@ -4,7 +4,7 @@ use crate::http::utility::fetch_data;
 use crate::types::{Error, Result};
 use indicatif::ProgressBar;
 use regex::Regex;
-use reqwest::{Client};
+use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -98,7 +98,10 @@ async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
                             rpid,
                             Comment::new_with_notify(oid, r#type, content, notify_id, 0),
                         );
-                        pb.set_message(format!("Fetched liked comment: {rpid}. Counts now: {}",h.len()));
+                        pb.set_message(format!(
+                            "Fetched liked comment: {rpid}. Counts now: {}",
+                            h.len()
+                        ));
                         pb.tick();
                     }
                     Err(e) => {
@@ -154,7 +157,10 @@ async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
                             rpid,
                             Comment::new_with_notify(oid, r#type, content, notify_id, 1),
                         );
-                        pb.set_message(format!("Fetched replyed comment: {rpid}. Counts now: {}",h.len()));
+                        pb.set_message(format!(
+                            "Fetched replyed comment: {rpid}. Counts now: {}",
+                            h.len()
+                        ));
                         pb.tick();
                     }
                     Err(e) => {

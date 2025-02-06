@@ -10,7 +10,7 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{info};
+use tracing::info;
 
 fn extract_cid(native_uri: &str) -> Option<u64> {
     let re = Regex::new(r"cid=(\d+)").unwrap();

@@ -4,7 +4,7 @@ use crate::http::utility::video_info::get_cid;
 use crate::http::utility::{fetch_data, get_uid};
 use crate::types::Result;
 use indicatif::ProgressBar;
-use reqwest::{Client};
+use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,7 +44,7 @@ pub async fn fetch(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> {
             }
         }
         if res.cursor.is_end {
-            pb.finish_with_message("Fetched successful from aicu.cc");
+            info!("Fetch successfully from aicu.cc");
             break;
         }
         page += 1;

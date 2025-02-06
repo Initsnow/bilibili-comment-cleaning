@@ -11,11 +11,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::spawn;
 use tokio::sync::mpsc::Sender;
+use tracing_subscriber::fmt::time::LocalTime;
 
 static TAFFY: &[u8] = include_bytes!("assets/taffy.png");
 
 fn main() -> iced::Result {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .compact()
+        .with_target(false)
+        .with_timer(LocalTime::rfc_3339())
+        .init();
 
     let icon = iced::window::icon::from_file_data(TAFFY, None).unwrap();
     iced::application("BilibiliCommentCleaning", App::update, App::view)

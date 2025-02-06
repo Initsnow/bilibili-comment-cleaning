@@ -8,7 +8,7 @@ use crate::screens::main;
 use crate::types::{Message, RemoveAble, Result};
 use iced::Task;
 use indicatif::ProgressBar;
-use reqwest::{Client};
+use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::mem;
@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio::try_join;
-use tracing::{error};
+use tracing::error;
 
 #[derive(Debug, Default, Clone)]
 pub struct Comment {
@@ -95,64 +95,6 @@ impl RemoveAble for Comment {
         }
     }
 }
-pub async fn fetch_from_aicu(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>> {
-    let uid = get_uid(Arc::clone(&cl)).await?;
-    let mut page = 1;
-    let mut h = HashMap::new();
-
-    // get counts & init progress bar
-    let total_replies = get_json(
-        Arc::clone(&cl),
-        format!(
-            "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn=1&ps=0&mode=0&keyword=",
-            uid
-        ),
-    )
-    .await?["data"]["cursor"]["all_count"]
-        .as_u64()
-        .ok_or("fetch_from_aicu: Parse `all_count` failed")?;
-    let pb = ProgressBar::new(total_replies);
-    println!("正在从aicu.cc获取评论...");
-    sleep(Duration::from_secs(1)).await;
-    loop {
-        let res = get_json(
-            Arc::clone(&cl),
-            format!(
-                "https://api.aicu.cc/api/v3/search/getreply?uid={}&pn={}&ps=500&mode=0&keyword=",
-                uid, page
-            ),
-        )
-        .await?;
-        let replies = &res["data"]["replies"];
-        for i in replies
-            .as_array()
-            .ok_or("fetch_from_aicu: replies isn't a array")?
-        {
-            let rpid = i["rpid"]
-                .as_str()
-                .unwrap()
-                .parse()
-                .map_err(|_| "fetch_from_aicu: Parse `rpid` failed")?;
-            h.insert(
-                rpid,
-                Comment::new(
-                    i["dyn"]["oid"].as_str().unwrap().parse()?,
-                    i["dyn"]["type"].as_u64().unwrap() as u8,
-                    i["message"].as_str().unwrap().to_string(),
-                ),
-            );
-            pb.inc(1);
-        }
-        page += 1;
-        if res["data"]["cursor"]["is_end"].as_bool().unwrap() {
-            pb.finish_with_message("Fetched successful from aicu.cc");
-            break;
-        }
-        sleep(Duration::from_secs(3)).await;
-    }
-    Ok(Arc::new(Mutex::new(h)))
-}
-
 
 pub async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>> {
     let (m1, m2) = try_join!(official::fetch(cl.clone()), aicu::fetch(cl.clone()))?;
@@ -160,10 +102,7 @@ pub async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Commen
     let (m1, m2) = {
         let mut lock1 = m1.lock().await;
         let mut lock2 = m2.lock().await;
-        (
-            mem::take(&mut *lock1),
-            mem::take(&mut *lock2),
-        )
+        (mem::take(&mut *lock1), mem::take(&mut *lock2))
     };
 
     Ok(Arc::new(Mutex::new(m1.into_iter().chain(m2).collect())))

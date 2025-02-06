@@ -172,6 +172,7 @@ impl CommentViewer {
                 ));
             }
             CvMsg::DeleteComment => {
+                self.is_deleting = true;
                 return Action::DeleteComment {
                     comments: self.comments.as_ref().unwrap().clone(),
                     sleep_seconds: self.sleep_seconds.parse::<f32>().unwrap_or(0.0),

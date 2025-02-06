@@ -1,4 +1,4 @@
-use crate::types::{Result};
+use crate::types::Result;
 use reqwest::{header, Client, IntoUrl};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -17,8 +17,8 @@ pub async fn get_uid(cl: Arc<Client>) -> Result<u64> {
         .as_u64()
         .ok_or("Can't get uid. Please check your cookie data")?;
     info!(
-        "Got uid: {uid}\nI found u, {} 😎",
-        json_res["data"]["uname"]
+        "Got uid: {uid}  I found u, {} 😎",
+        json_res["data"]["uname"].as_str().unwrap()
     );
     Ok(uid)
 }

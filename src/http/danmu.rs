@@ -1,6 +1,6 @@
+use crate::dvmsg;
 use crate::screens::main;
 use crate::types::{Message, RemoveAble, Result};
-use crate::{dvmsg};
 use iced::Task;
 use reqwest::Client;
 use serde_json::Value;
@@ -54,7 +54,6 @@ impl RemoveAble for Danmu {
             .ok_or("Remove Danmu: Parse json res code failed")?
             == 0
         {
-            info!("Remove danmu {} successfully", dmid);
             Ok(dmid)
         } else {
             let e = format!("Can't remove danmu. Response json: {}", json_res);
@@ -70,10 +69,7 @@ async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> 
     let (m1, m2) = {
         let mut lock1 = m1.lock().await;
         let mut lock2 = m2.lock().await;
-        (
-            mem::take(&mut *lock1),
-            mem::take(&mut *lock2),
-        )
+        (mem::take(&mut *lock1), mem::take(&mut *lock2))
     };
 
     Ok(Arc::new(Mutex::new(m1.into_iter().chain(m2).collect())))

@@ -172,6 +172,7 @@ impl NotifyViewer {
                 ));
             }
             NvMsg::DeleteNotify => {
+                self.is_deleting = true;
                 return Action::DeleteNotify {
                     notify: self.notify.as_ref().unwrap().clone(),
                     sleep_seconds: self.sleep_seconds.parse::<f32>().unwrap_or(0.0),
