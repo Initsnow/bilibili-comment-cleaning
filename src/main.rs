@@ -5,10 +5,11 @@ use bilibili_comment_cleaning::http::qr_code::QRdata;
 use bilibili_comment_cleaning::http::{comment, danmu};
 use bilibili_comment_cleaning::types::*;
 use bilibili_comment_cleaning::*;
-use iced::{Element, Subscription, Task};
+use iced::{time, Element, Subscription, Task};
 use screens::{cookie, qrcode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::spawn;
 use tokio::sync::mpsc::Sender;
 use tracing_subscriber::fmt::time::LocalTime;
@@ -23,14 +24,16 @@ fn main() -> iced::Result {
         .init();
 
     let icon = iced::window::icon::from_file_data(TAFFY, None).unwrap();
-    iced::application("BilibiliCommentCleaning", App::update, App::view)
+
+    iced::application(App::new, App::update, App::view)
         .window(iced::window::Settings {
             icon: Some(icon),
             size: (900.0, 500.0).into(),
             ..Default::default()
         })
         .subscription(App::subscription)
-        .run_with(App::new)
+        .title("BilibiliCommentCleaning")
+        .run()
 }
 
 #[derive(Debug)]
@@ -44,7 +47,7 @@ struct App {
 impl App {
     fn new() -> (Self, Task<Message>) {
         let aicu_state = Arc::new(AtomicBool::new(true));
-        let app=        App {
+        let app = App {
             api: Arc::new(ApiService::default()),
             screen: Screen::new(aicu_state.clone()),
             sender: None,
@@ -69,28 +72,11 @@ impl App {
                             self.screen = Screen::WaitScanQRcode(s);
                             t.map(Message::QRCode)
                         }
-                        cookie::Action::Boot {
-                            api,
-                            aicu_state,
-                        } => {
-                            self.api=Arc::new(api);
+                        cookie::Action::Boot { api, aicu_state } => {
+                            self.api = Arc::new(api);
                             self.screen = Screen::Main(main::Main::new(aicu_state));
 
-                            let sender_clone = self.sender.as_ref().unwrap().clone();
-                            let fetch_task = fetch_task(
-                                self.api.clone(),
-                                aicu_state,
-                            );
-
-                            Task::batch([
-                                fetch_task,
-                                Task::perform(
-                                    async move {
-                                        sender_clone.send(ChannelMsg::StopRefreshQRcodeState).await
-                                    },
-                                    |_| Message::QRCode(qrcode::Message::QRcodeRefresh),
-                                ),
-                            ])
+                            fetch_task(self.api.clone(), aicu_state)
                         }
                         cookie::Action::None => Task::none(),
                     }
@@ -107,26 +93,13 @@ impl App {
                             Task::none()
                         }
                         qrcode::Action::Boot { csrf, aicu_state } => {
-                            self.api=Arc::new(ApiService::new_with_fields(self.api.client().clone(), csrf));
+                            self.api = Arc::new(ApiService::new_with_fields(
+                                self.api.client().clone(),
+                                csrf,
+                            ));
                             self.screen = Screen::Main(main::Main::new(aicu_state));
 
-                            if let Some(sender) = self.sender.clone() {
-                                let fetch_task = fetch_task(
-                                    self.api.clone(),
-                                    aicu_state,
-                                );
-                                Task::batch([
-                                    fetch_task,
-                                    Task::perform(
-                                        async move {
-                                            sender.send(ChannelMsg::StopRefreshQRcodeState).await
-                                        },
-                                        |_| Message::QRCode(qrcode::Message::QRcodeRefresh),
-                                    ),
-                                ])
-                            } else {
-                                Task::none()
-                            }
+                            fetch_task(self.api.clone(), aicu_state)
                         }
                         qrcode::Action::EnterCookie => {
                             self.screen = Screen::WaitingForInputCookie(cookie::Cookie::new(
@@ -135,7 +108,7 @@ impl App {
                             Task::none()
                         }
                         qrcode::Action::GetState(v) => {
-                            let api =self.api.clone();
+                            let api = self.api.clone();
                             Task::perform(
                                 async move {
                                     let v = v.lock().await;
@@ -184,9 +157,7 @@ impl App {
                             ));
                             Task::none()
                         }
-                        main::Action::RetryFetchNotify => notify::fetch_task(
-                            self.api.clone(),
-                        ),
+                        main::Action::RetryFetchNotify => notify::fetch_task(self.api.clone()),
                         main::Action::DeleteDanmu {
                             danmu,
                             sleep_seconds,
@@ -224,6 +195,13 @@ impl App {
         }
     }
     fn subscription(&self) -> Subscription<Message> {
+        if let Screen::WaitScanQRcode(_) = &self.screen {
+            return Subscription::batch([
+                time::every(Duration::from_secs(1))
+                    .map(move |_| Message::QRCode(qrcode::Message::QRcodeRefresh)),
+                main_subscription(),
+            ]);
+        }
         main_subscription()
     }
 
@@ -234,8 +212,9 @@ impl App {
 }
 
 fn fetch_task(api: Arc<ApiService>, aicu_state: bool) -> Task<Message> {
-    notify::fetch_task(api.clone()).chain(
+    Task::batch([
+        notify::fetch_task(api.clone()),
         comment::fetch_via_aicu_state(api.clone(), aicu_state)
             .chain(danmu::fetch_via_aicu_state(api.clone(), aicu_state)),
-    )
+    ])
 }

@@ -1,9 +1,11 @@
 [package]
 name = "bilibili-comment-cleaning"
-version = "0.6.10"
+version = "0.6.114"
 authors = ["Initsnow <inksnow2233@gmail.com>"]
+build = "src/build.rs"
 edition = "2021"
 license = "GPL-3.0"
+description = "bilibili 删除历史评论、弹幕、通知 "
 
 [dependencies]
 iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = ["tokio", "image", "qr_code", "debug"] }
@@ -20,3 +22,7 @@ tracing-subscriber = { version = "0.3.18", features = ["local-time"] }
 [profile.release]
 opt-level = "s"
 lto = true
+codegen-units = 1
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "*"

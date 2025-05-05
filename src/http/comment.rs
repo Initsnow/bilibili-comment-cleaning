@@ -1,6 +1,7 @@
 pub mod aicu;
 pub mod official;
 
+use super::api_service::ApiService;
 use crate::cvmsg;
 use crate::http::notify::Notify;
 use crate::screens::main;
@@ -12,7 +13,6 @@ use std::mem;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::try_join;
-use super::api_service::ApiService;
 
 #[derive(Debug, Default, Clone)]
 pub struct Comment {
@@ -55,8 +55,11 @@ impl RemoveAble for Comment {
                 ("rpid", rpid.to_string()),
             ];
             api.post_form(
-                format!("https://api.bilibili.com/x/v2/reply/del?csrf={}", api.csrf()),
-                &form_data
+                format!(
+                    "https://api.bilibili.com/x/v2/reply/del?csrf={}",
+                    api.csrf()
+                ),
+                &form_data,
             )
             .await?
             .json()

@@ -65,16 +65,13 @@ impl RemoveAble for Notify {
                     ("csrf_token", api.csrf().to_string()),
                     ("csrf", api.csrf().to_string()),
                 ];
-                let json_res: Value = api.post_form("https://api.bilibili.com/x/msgfeed/del", &form_data)
+                let json_res: Value = api
+                    .post_form("https://api.bilibili.com/x/msgfeed/del", &form_data)
                     .await?
                     .error_for_status()?
                     .json()
                     .await?;
-                if json_res["code"]
-                    .as_i64()
-                    .unwrap()
-                    == 0
-                {
+                if json_res["code"].as_i64().unwrap() == 0 {
                     Ok(id)
                 } else {
                     Err(Error::DeleteNotifyError(json_res.into()))
@@ -98,9 +95,7 @@ pub async fn fetch(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Notify
 }
 
 pub fn fetch_task(api: Arc<ApiService>) -> Task<Message> {
-    Task::perform(fetch(api), |e| {
-        nvmsg::NotifysFetched(e).into()
-    })
+    Task::perform(fetch(api), |e| nvmsg::NotifysFetched(e).into())
 }
 
 pub async fn fetch_liked(api: Arc<ApiService>) -> Result<HashMap<u64, Notify>> {
@@ -224,13 +219,11 @@ pub async fn fetch_ated(api: Arc<ApiService>) -> Result<HashMap<u64, Notify>> {
             .await?
             .data
         } else {
-            api.fetch_data::<reply::ApiResponse>(
-                format!(
-                    "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web&id={}&at_time={}",
-                    cursor_id.unwrap(),
-                    cursor_time.unwrap()
-                ),
-            )
+            api.fetch_data::<reply::ApiResponse>(format!(
+                "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web&id={}&at_time={}",
+                cursor_id.unwrap(),
+                cursor_time.unwrap()
+            ))
             .await?
             .data
         };
@@ -263,9 +256,7 @@ pub async fn fetch_ated(api: Arc<ApiService>) -> Result<HashMap<u64, Notify>> {
     Ok(m)
 }
 
-pub async fn fetch_system_notify(
-    api: Arc<ApiService>,
-) -> Result<HashMap<u64, Notify>> {
+pub async fn fetch_system_notify(api: Arc<ApiService>) -> Result<HashMap<u64, Notify>> {
     let mut h: HashMap<u64, Notify> = HashMap::new();
     let mut cursor = None;
     let mut api_type = 0_u8;

@@ -218,7 +218,7 @@ impl NotifyViewer {
             NvMsg::NotifysFetched(Err(e)) => {
                 self.is_fetching = false;
                 let e = format!("Failed to fetch notify: {:?}", e);
-                error!("{:?}",e);
+                error!("{:?}", e);
                 self.error = Some(e);
             }
             NvMsg::RetryFetchNotify => {

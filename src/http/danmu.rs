@@ -1,3 +1,4 @@
+use super::api_service::ApiService;
 use crate::dvmsg;
 use crate::http::notify::Notify;
 use crate::screens::main;
@@ -9,7 +10,6 @@ use std::mem;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::try_join;
-use super::api_service::ApiService;
 
 pub mod aicu;
 pub mod official;
@@ -49,16 +49,13 @@ impl RemoveAble for Danmu {
             ("type", 1.to_string()),
             ("csrf", api.csrf().to_string()),
         ];
-        let json_res: Value = api.post_form("https://api.bilibili.com/x/msgfeed/del", &form_data)
+        let json_res: Value = api
+            .post_form("https://api.bilibili.com/x/msgfeed/del", &form_data)
             .await?
             .error_for_status()?
             .json()
             .await?;
-        if json_res["code"]
-            .as_i64()
-            .unwrap()
-            == 0
-        {
+        if json_res["code"].as_i64().unwrap() == 0 {
             if let Some(notify_id) = self.notify_id {
                 Notify::new(String::new(), 0)
                     .remove(notify_id, api.clone())

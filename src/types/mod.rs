@@ -57,8 +57,6 @@ pub enum ChannelMsg {
         f32,
     ),
     StopDeleteDanmu,
-    StartRefreshQRcodeState,
-    StopRefreshQRcodeState,
 }
 
 pub trait RemoveAble {

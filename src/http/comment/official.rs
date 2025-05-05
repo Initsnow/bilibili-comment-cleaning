@@ -1,3 +1,4 @@
+use crate::http::api_service::ApiService;
 use crate::http::comment::Comment;
 use crate::http::response::official::*;
 use crate::types::{Error, Result};
@@ -9,7 +10,6 @@ use std::sync::LazyLock;
 use tokio::sync::Mutex;
 use tokio::try_join;
 use tracing::{info, warn};
-use crate::http::api_service::ApiService;
 
 static VIDEO_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"bilibili://video/(\d+)").unwrap());

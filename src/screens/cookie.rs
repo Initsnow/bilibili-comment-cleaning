@@ -1,10 +1,10 @@
+use crate::http::api_service::ApiService;
 use iced::{
     widget::{button, center, column, row, text_input, toggler, Space},
     Element, Length, Task,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use crate::http::api_service::ApiService;
 
 #[derive(Debug)]
 pub struct Cookie {
@@ -22,10 +22,7 @@ pub enum Message {
 
 pub enum Action {
     Run(Task<Message>),
-    Boot {
-        api: ApiService,
-        aicu_state: bool,
-    },
+    Boot { api: ApiService, aicu_state: bool },
     EnterQRCode,
     None,
 }

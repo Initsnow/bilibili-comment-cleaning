@@ -1,3 +1,4 @@
+use super::super::api_service::ApiService;
 use crate::http::danmu::Danmu;
 use crate::http::response::official::like::ApiResponse;
 use crate::types::Result;
@@ -9,7 +10,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
-use super::super::api_service::ApiService;
 
 fn extract_cid(native_uri: &str) -> Option<u64> {
     let re = Regex::new(r"cid=(\d+)").unwrap();
@@ -18,7 +18,9 @@ fn extract_cid(native_uri: &str) -> Option<u64> {
         .and_then(|m| m.as_str().parse::<u64>().ok())
 }
 
-fn create_liked_danmu_stream(api: Arc<ApiService>) -> impl Stream<Item = Result<Vec<(u64, Danmu)>>> {
+fn create_liked_danmu_stream(
+    api: Arc<ApiService>,
+) -> impl Stream<Item = Result<Vec<(u64, Danmu)>>> {
     try_unfold(
         Some(String::from(
             "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",

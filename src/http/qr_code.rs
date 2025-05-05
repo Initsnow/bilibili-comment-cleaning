@@ -1,6 +1,6 @@
+use crate::http::api_service::ApiService;
 use crate::types::Result;
 use std::sync::Arc;
-use crate::http::api_service::ApiService;
 
 #[derive(Debug, Clone)]
 pub struct QRdata {
@@ -10,10 +10,9 @@ pub struct QRdata {
 impl QRdata {
     pub async fn request_qrcode() -> Result<QRdata> {
         let api = Arc::new(ApiService::default());
-        let a = api.get_json(
-            "https://passport.bilibili.com/x/passport-login/web/qrcode/generate",
-        )
-        .await?;
+        let a = api
+            .get_json("https://passport.bilibili.com/x/passport-login/web/qrcode/generate")
+            .await?;
         Ok(QRdata {
             url: a["data"]["url"].as_str().unwrap().to_string(),
             key: a["data"]["qrcode_key"].as_str().unwrap().to_string(),

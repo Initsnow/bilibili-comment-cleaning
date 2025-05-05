@@ -95,13 +95,14 @@ impl QRCode {
             Message::QRcodeGot(Ok(d)) => {
                 self.qr_data = Some(qr_code::Data::new(d.url.clone()).unwrap());
                 self.qr_code = Some(Arc::new(Mutex::new(d)));
-                return Action::SendtoChannel(ChannelMsg::StartRefreshQRcodeState);
             }
             Message::AicuToggled(b) => {
                 self.aicu_state.store(b, Ordering::SeqCst);
             }
             Message::QRcodeRefresh => {
-                return Action::GetState(self.qr_code.as_ref().unwrap().clone());
+                if let Some(qrdata) = &self.qr_code {
+                    return Action::GetState(qrdata.clone());
+                }
             }
             Message::QRcodeState(v) => match v {
                 Ok(v) => {
@@ -117,7 +118,7 @@ impl QRCode {
                 Err(e) => {
                     self.qr_code_state = None;
                     let e = format!("Failed to get QRCode state: {:#?}", e);
-                    error!("{:?}",e);
+                    error!("{:?}", e);
                     self.error = Some(e);
                 }
             },
@@ -126,7 +127,7 @@ impl QRCode {
             }
             Message::QRcodeGot(Err(e)) => {
                 let e = format!("Failed to fetch QRCode: {:#?}", e);
-                error!("{:?}",e);
+                error!("{:?}", e);
                 self.error = Some(e);
             }
         }

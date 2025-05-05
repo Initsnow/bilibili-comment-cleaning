@@ -13,11 +13,15 @@ pub struct ApiService {
 impl Default for ApiService {
     fn default() -> Self {
         Self {
-            client: Client::builder().default_headers({
-                let mut headers = header::HeaderMap::new();
-                headers.insert("User-Agent", header::HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.2651.86"));
-                headers
-            }).cookie_store(true).build().unwrap(),
+            client: Client::builder()
+                .default_headers({
+                    let mut headers = header::HeaderMap::new();
+                    headers.insert("User-Agent", header::HeaderValue::from_static(UA));
+                    headers
+                })
+                .cookie_store(true)
+                .build()
+                .unwrap(),
             csrf: String::new(),
         }
     }
@@ -35,7 +39,8 @@ impl ApiService {
         let client = Client::builder()
             .default_headers(headers)
             .cookie_store(true)
-            .build().unwrap();
+            .build()
+            .unwrap();
 
         Self { client, csrf }
     }

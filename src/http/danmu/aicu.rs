@@ -1,3 +1,4 @@
+use crate::http::api_service::ApiService;
 use crate::http::danmu::Danmu;
 use crate::http::response::aicu::danmu::ApiResponse;
 use crate::types::Result;
@@ -8,19 +9,16 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::info;
-use crate::http::api_service::ApiService;
 
 pub async fn fetch(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> {
     let uid = api.get_uid().await?;
     let mut page = 1;
     let mut h = HashMap::new();
 
-    let all_count =
-        api.fetch_data::<ApiResponse>(
-            format!(
-                "https://api.aicu.cc/api/v3/search/getvideodm?uid={uid}&pn=1&ps=0&mode=0&keyword=",
-            ),
-        )
+    let all_count = api
+        .fetch_data::<ApiResponse>(format!(
+            "https://api.aicu.cc/api/v3/search/getvideodm?uid={uid}&pn=1&ps=0&mode=0&keyword=",
+        ))
         .await?
         .data
         .cursor
@@ -37,9 +35,14 @@ pub async fn fetch(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Danmu>
         ).await?.data;
         for i in res.videodmlist {
             // 获取cid的逻辑需要修改为使用ApiService
-            let cid = api.fetch_data::<crate::http::utility::video_info::PageList>(
-                format!("https://api.bilibili.com/x/player/pagelist?aid={}", i.oid)
-            ).await?.data.map(|e| e[0].cid);
+            let cid = api
+                .fetch_data::<crate::http::utility::video_info::PageList>(format!(
+                    "https://api.bilibili.com/x/player/pagelist?aid={}",
+                    i.oid
+                ))
+                .await?
+                .data
+                .map(|e| e[0].cid);
             if let Some(cid) = cid {
                 h.insert(i.id, Danmu::new(i.content, cid));
                 pb.inc(1);

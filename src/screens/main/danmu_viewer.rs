@@ -222,7 +222,7 @@ impl DanmuViewer {
             DvMsg::DanmusFetched(Err(e)) => {
                 self.is_fetching = false;
                 let e = format!("Failed to fetch danmu: {:?}", e);
-                error!("{:?}",e);
+                error!("{:?}", e);
                 self.error = Some(e);
             }
             DvMsg::RetryFetchDanmu => {

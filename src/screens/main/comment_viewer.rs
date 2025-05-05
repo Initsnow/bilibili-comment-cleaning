@@ -223,7 +223,7 @@ impl CommentViewer {
             CvMsg::CommentsFetched(Err(e)) => {
                 self.is_fetching = false;
                 let e = format!("Failed to fetch comments: {:?}", e);
-                error!("{:?}",e);
+                error!("{:?}", e);
                 self.error = Some(e);
             }
             CvMsg::RetryFetchComment => {

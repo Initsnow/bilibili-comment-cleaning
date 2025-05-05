@@ -1,8 +1,8 @@
+use http::api_service::ApiService;
 use iced::futures::channel::mpsc::Sender;
 use iced::futures::SinkExt;
 use iced::{stream, Subscription};
 use indicatif::{ProgressBar, ProgressStyle};
-use http::api_service::ApiService;
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -20,7 +20,7 @@ pub use crate::screens::main::comment_viewer::CvMsg as cvmsg;
 pub use crate::screens::main::danmu_viewer::DvMsg as dvmsg;
 pub use crate::screens::main::notify_viewer::NvMsg as nvmsg;
 
-use crate::screens::{main, qrcode};
+use crate::screens::main;
 use crate::types::{ChannelMsg, Message, RemoveAble};
 
 const UA:&str="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.2651.86";
@@ -94,7 +94,7 @@ async fn handle_delete<T>(
                 pb.inc(1);
             }
             Err(err) => {
-                error!("Error: {}", err);
+                error!("{}", err);
             }
         }
 
@@ -108,7 +108,7 @@ async fn handle_delete<T>(
 
 pub fn main_subscription() -> Subscription<Message> {
     Subscription::run(|| {
-        stream::channel(10, |mut output| async move {
+        stream::channel(10, |mut output: Sender<Message>| async move {
             let (sender, mut receiver) = mpsc::channel(100);
             output
                 .send(Message::ChannelConnected(sender))
@@ -202,26 +202,8 @@ pub fn main_subscription() -> Subscription<Message> {
                     ChannelMsg::StopDeleteDanmu => {
                         flags.3.store(false, Ordering::SeqCst);
                     }
-                    ChannelMsg::StartRefreshQRcodeState => {
-                        flags.0.store(true, Ordering::SeqCst);
-                        let mut output_clone = output.clone();
-                        let flag = Arc::clone(&flags.0);
-                        spawn(async move {
-                            while flag.load(Ordering::SeqCst) {
-                                output_clone
-                                    .send(Message::QRCode(qrcode::Message::QRcodeRefresh))
-                                    .await
-                                    .unwrap();
-                                sleep(Duration::from_secs(1)).await;
-                            }
-                        });
-                    }
-                    ChannelMsg::StopRefreshQRcodeState => {
-                        flags.0.store(false, Ordering::SeqCst);
-                    }
                 }
             }
-            error!("Channel is closed");
         })
     })
 }
