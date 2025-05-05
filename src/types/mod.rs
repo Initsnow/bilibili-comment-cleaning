@@ -80,26 +80,21 @@ pub enum Error {
     ParseIntError(Arc<ParseIntError>),
     #[error("Unrecognized URI: {0}")]
     UnrecognizedURI(Arc<String>),
-    #[error("Error: {0}")]
-    Other(&'static str),
-    #[error("Error: {0}")]
-    OtherString(Arc<String>),
+    #[error("Failed to delete comment, Response json: {0}")]
+    DeleteCommentError(Arc<serde_json::Value>),
+    #[error("Failed to delete danmu, Response json: {0}")]
+    DeleteDanmuError(Arc<serde_json::Value>),
+    #[error("Failed to delete notify, Response json: {0}")]
+    DeleteNotifyError(Arc<serde_json::Value>),
+    #[error("Failed to delete system notify, Response json: {0}")]
+    DeleteSystemNotifyError(Arc<serde_json::Value>),
 }
 impl From<reqwest::Error> for Error {
     fn from(error: reqwest::Error) -> Self {
         Self::RequestFailed(Arc::new(error))
     }
 }
-impl From<&'static str> for Error {
-    fn from(error: &'static str) -> Self {
-        Self::Other(error)
-    }
-}
-impl From<String> for Error {
-    fn from(error: String) -> Self {
-        Self::OtherString(Arc::new(error))
-    }
-}
+
 impl From<ParseIntError> for Error {
     fn from(error: ParseIntError) -> Self {
         Self::ParseIntError(Arc::new(error))

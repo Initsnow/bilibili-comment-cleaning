@@ -4,7 +4,7 @@ pub mod official;
 use crate::cvmsg;
 use crate::http::notify::Notify;
 use crate::screens::main;
-use crate::types::{Message, RemoveAble, Result};
+use crate::types::{Error, Message, RemoveAble, Result};
 use iced::Task;
 use reqwest::Client;
 use serde_json::Value;
@@ -13,7 +13,6 @@ use std::mem;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::try_join;
-use tracing::error;
 
 #[derive(Debug, Default, Clone)]
 pub struct Comment {
@@ -85,9 +84,7 @@ impl RemoveAble for Comment {
             }
             Ok(rpid)
         } else {
-            let e = format!("Can't remove comment. Response json: {}", json_res);
-            error!("{:?}",e);
-            Err(e.into())
+            Err(Error::DeleteCommentError(json_res.into()))
         }
     }
 }

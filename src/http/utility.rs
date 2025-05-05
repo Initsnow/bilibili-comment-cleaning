@@ -15,7 +15,7 @@ pub async fn get_uid(cl: Arc<Client>) -> Result<u64> {
     let json_res = get_json(cl, "https://api.bilibili.com/x/member/web/account").await?;
     let uid = json_res["data"]["mid"]
         .as_u64()
-        .ok_or("Can't get uid. Please check your cookie data")?;
+        .unwrap();
     info!(
         "Got uid: {uid}  I found u, {} 😎",
         json_res["data"]["uname"].as_str().unwrap()
@@ -60,10 +60,10 @@ pub mod video_info {
 pub async fn create_client(ck: String) -> Result<(Client, String)> {
     let a = ck
         .find("bili_jct=")
-        .ok_or("Create Client Failed: Can't find csrf data. Make sure that your cookie data has a bili_jct field.")?;
+        .unwrap();
     let b = ck[a..]
         .find(";")
-        .ok_or("Create Client Failed: Can't find b")?;
+        .unwrap();
     let csrf = &ck[a + 9..b + a];
 
     let mut headers = header::HeaderMap::new();

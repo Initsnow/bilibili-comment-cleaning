@@ -1,7 +1,7 @@
 use crate::dvmsg;
 use crate::http::notify::Notify;
 use crate::screens::main;
-use crate::types::{Message, RemoveAble, Result};
+use crate::types::{Error, Message, RemoveAble, Result};
 use iced::Task;
 use reqwest::Client;
 use serde_json::Value;
@@ -10,7 +10,6 @@ use std::mem;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::try_join;
-use tracing::error;
 
 pub mod aicu;
 pub mod official;
@@ -62,7 +61,7 @@ impl RemoveAble for Danmu {
             .await?;
         if json_res["code"]
             .as_i64()
-            .ok_or("Remove Danmu: Parse json res code failed")?
+            .unwrap()
             == 0
         {
             if let Some(notify_id) = self.notify_id {
@@ -72,9 +71,7 @@ impl RemoveAble for Danmu {
             }
             Ok(dmid)
         } else {
-            let e = format!("Can't remove danmu. Response json: {}", json_res);
-            error!("{:?}",e);
-            Err(e.into())
+            Err(Error::DeleteDanmuError(json_res.into()))
         }
     }
 }

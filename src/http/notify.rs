@@ -2,7 +2,7 @@ use super::utility::{fetch_data, get_json};
 use crate::http::response::official::{like, reply};
 use crate::nvmsg;
 use crate::screens::main;
-use crate::types::{Message, RemoveAble, Result};
+use crate::types::{Error, Message, RemoveAble, Result};
 use iced::Task;
 use indicatif::ProgressBar;
 use reqwest::Client;
@@ -63,12 +63,7 @@ impl RemoveAble for Notify {
                 if json_res["code"].as_i64().unwrap() == 0 {
                     Ok(id)
                 } else {
-                    let e = format!(
-                        "Can't remove the system notify. Response json: {}",
-                        json_res
-                    );
-                    error!("{:?}",e);
-                    Err(e.into())
+                    Err(Error::DeleteSystemNotifyError(json_res.into()))
                 }
             }
             None => {
@@ -92,14 +87,12 @@ impl RemoveAble for Notify {
                     .await?;
                 if json_res["code"]
                     .as_i64()
-                    .ok_or("Remove Notify: Parse json res code failed")?
+                    .unwrap()
                     == 0
                 {
                     Ok(id)
                 } else {
-                    let e = format!("Can't remove notify. Response json: {}", json_res);
-                    error!("{:?}",e);
-                    Err(e.into())
+                    Err(Error::DeleteNotifyError(json_res.into()))
                 }
             }
         }
