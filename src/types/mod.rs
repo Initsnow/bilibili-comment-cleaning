@@ -6,7 +6,6 @@ use crate::screens::main;
 use crate::screens::main::comment_viewer::CvMsg;
 use crate::screens::main::danmu_viewer::DvMsg;
 use crate::screens::main::notify_viewer::NvMsg;
-use reqwest::Client;
 use std::collections::HashMap;
 use std::num::ParseIntError;
 use std::sync::Arc;

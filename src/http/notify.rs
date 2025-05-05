@@ -1,7 +1,6 @@
 use super::api_service::ApiService;
 use crate::http::response::official::{like, reply};
 use crate::nvmsg;
-use crate::screens::main;
 use crate::types::{Error, Message, RemoveAble, Result};
 use iced::Task;
 use indicatif::ProgressBar;
@@ -10,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::try_join;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Clone, Debug)]
 pub struct Notify {

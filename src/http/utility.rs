@@ -1,8 +1,3 @@
-use crate::types::Result;
-use reqwest::{header, Client};
-use std::sync::Arc;
-use tracing::info;
-use crate::http::api_service::ApiService;
 
 pub mod video_info {
     use crate::types::Result;

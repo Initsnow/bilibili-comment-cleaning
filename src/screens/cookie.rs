@@ -1,11 +1,9 @@
-use crate::types::Result;
 use iced::{
     widget::{button, center, column, row, text_input, toggler, Space},
     Element, Length, Task,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::error;
 use crate::http::api_service::ApiService;
 
 #[derive(Debug)]

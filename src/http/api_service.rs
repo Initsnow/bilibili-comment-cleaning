@@ -1,8 +1,7 @@
 use crate::{types::Result, UA};
 use reqwest::{header, Client, IntoUrl, Response};
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
-use std::sync::Arc;
+use serde_json::Value;
 use tracing::debug;
 
 #[derive(Debug)]
