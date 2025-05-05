@@ -1,11 +1,10 @@
-use super::utility::{fetch_data, get_json};
+use super::api_service::ApiService;
 use crate::http::response::official::{like, reply};
 use crate::nvmsg;
 use crate::screens::main;
 use crate::types::{Error, Message, RemoveAble, Result};
 use iced::Task;
 use indicatif::ProgressBar;
-use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,25 +40,17 @@ impl Notify {
     }
 }
 impl RemoveAble for Notify {
-    async fn remove(&self, id: u64, cl: Arc<Client>, csrf: Arc<String>) -> Result<u64> {
+    async fn remove(&self, id: u64, api: Arc<ApiService>) -> Result<u64> {
         match self.system_notify_api {
             Some(api_type) => {
+                let csrf = api.csrf();
                 let json = if api_type == 0 {
-                    json!({"csrf":*csrf,"ids":[id],"station_ids":[],"type":self.tp,"build":8140300,"mobi_app":"android"})
+                    json!({"csrf":csrf,"ids":[id],"station_ids":[],"type":self.tp,"build":8140300,"mobi_app":"android"})
                 } else {
-                    json!({"csrf":*csrf,"ids":[],"station_ids":[id],"type":self.tp,"build":8140300,"mobi_app":"android"})
+                    json!({"csrf":csrf,"ids":[],"station_ids":[id],"type":self.tp,"build":8140300,"mobi_app":"android"})
                 };
-                let json_res:Value = cl
-                    .post(
-                        format!("https://message.bilibili.com/x/sys-msg/del_notify_list?build=8140300&mobi_app=android&csrf={csrf}"),
-                    )
-                    .json(&json)
-                    .send()
-                    .await
-                    ?
-                    .json()
-                    .await
-                    ?;
+                let url = format!("https://message.bilibili.com/x/sys-msg/del_notify_list?build=8140300&mobi_app=android&csrf={csrf}");
+                let json_res: Value = api.post_json(url, &json).await?.json().await?;
                 if json_res["code"].as_i64().unwrap() == 0 {
                     Ok(id)
                 } else {
@@ -67,20 +58,15 @@ impl RemoveAble for Notify {
                 }
             }
             None => {
-                let json_res: Value = cl
-                    .post(
-                        "
-    https://api.bilibili.com/x/msgfeed/del",
-                    )
-                    .form(&[
-                        ("tp", self.tp.to_string()),
-                        ("id", id.to_string()),
-                        ("build", 0.to_string()),
-                        ("mobi_app", "web".to_string()),
-                        ("csrf_token", csrf.to_string()),
-                        ("csrf", csrf.to_string()),
-                    ])
-                    .send()
+                let form_data = [
+                    ("tp", self.tp.to_string()),
+                    ("id", id.to_string()),
+                    ("build", 0.to_string()),
+                    ("mobi_app", "web".to_string()),
+                    ("csrf_token", api.csrf().to_string()),
+                    ("csrf", api.csrf().to_string()),
+                ];
+                let json_res: Value = api.post_form("https://api.bilibili.com/x/msgfeed/del", &form_data)
                     .await?
                     .error_for_status()?
                     .json()
@@ -99,12 +85,12 @@ impl RemoveAble for Notify {
     }
 }
 
-async fn fetch(cl: Arc<Client>, csrf: Arc<String>) -> Result<Arc<Mutex<HashMap<u64, Notify>>>> {
+pub async fn fetch(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Notify>>>> {
     let (m1, m2, m3, m4) = try_join!(
-        fetch_liked(cl.clone()),
-        fetch_ated(cl.clone()),
-        fetch_replyed(cl.clone()),
-        fetch_system_notify(cl.clone(), csrf.clone())
+        fetch_liked(api.clone()),
+        fetch_ated(api.clone()),
+        fetch_replyed(api.clone()),
+        fetch_system_notify(api.clone())
     )?;
 
     // 合并所有 HashMap
@@ -112,13 +98,13 @@ async fn fetch(cl: Arc<Client>, csrf: Arc<String>) -> Result<Arc<Mutex<HashMap<u
     Ok(Arc::new(Mutex::new(combined)))
 }
 
-pub fn fetch_task(cl: Arc<Client>, csrf: Arc<String>) -> Task<Message> {
-    Task::perform(fetch(cl.clone(), csrf.clone()), |e| {
-        Message::Main(main::Message::NotifyMsg(nvmsg::NotifysFetched(e)))
+pub fn fetch_task(api: Arc<ApiService>) -> Task<Message> {
+    Task::perform(fetch(api), |e| {
+        nvmsg::NotifysFetched(e).into()
     })
 }
 
-pub async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
+pub async fn fetch_liked(api: Arc<ApiService>) -> Result<HashMap<u64, Notify>> {
     let mut m: HashMap<u64, Notify> = HashMap::new();
     let mut cursor_id = None;
     let mut cursor_time = None;
@@ -127,16 +113,21 @@ pub async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     loop {
         let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            fetch_data::<like::ApiResponse>(
-                cl.clone(),
+            api.fetch_data::<like::ApiResponse>(
                 "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
             )
             .await?
             .data
             .total
         } else {
-            fetch_data::<like::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
-                .await?.data.total
+            api.fetch_data::<like::ApiResponse>(
+                format!("https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",
+                cursor_id.unwrap(),
+                cursor_time.unwrap())
+            )
+            .await?
+            .data
+            .total
         };
         if let Some(c) = &res.cursor {
             cursor_id = Some(c.id);
@@ -167,7 +158,7 @@ pub async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     Ok(m)
 }
 
-pub async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
+pub async fn fetch_replyed(api: Arc<ApiService>) -> Result<HashMap<u64, Notify>> {
     let mut m: HashMap<u64, Notify> = HashMap::new();
     let mut cursor_id = None;
     let mut cursor_time = None;
@@ -176,15 +167,19 @@ pub async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     loop {
         let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            fetch_data::<reply::ApiResponse>(
-                cl.clone(),
+            api.fetch_data::<reply::ApiResponse>(
                 "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web",
             )
             .await?
             .data
         } else {
-            fetch_data::<reply::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web&id={}&reply_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
-                .await?.data
+            api.fetch_data::<reply::ApiResponse>(
+                format!("https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web&id={}&reply_time={}",
+                cursor_id.unwrap(),
+                cursor_time.unwrap())
+            )
+            .await?
+            .data
         };
         if let Some(c) = &res.cursor {
             cursor_id = Some(c.id);
@@ -215,7 +210,7 @@ pub async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     Ok(m)
 }
 
-pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
+pub async fn fetch_ated(api: Arc<ApiService>) -> Result<HashMap<u64, Notify>> {
     let mut m: HashMap<u64, Notify> = HashMap::new();
     let mut cursor_id = None;
     let mut cursor_time = None;
@@ -224,15 +219,13 @@ pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
     loop {
         let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            fetch_data::<reply::ApiResponse>(
-                cl.clone(),
+            api.fetch_data::<reply::ApiResponse>(
                 "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
             )
             .await?
             .data
         } else {
-            fetch_data::<reply::ApiResponse>(
-                cl.clone(),
+            api.fetch_data::<reply::ApiResponse>(
                 format!(
                     "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web&id={}&at_time={}",
                     cursor_id.unwrap(),
@@ -272,8 +265,7 @@ pub async fn fetch_ated(cl: Arc<Client>) -> Result<HashMap<u64, Notify>> {
 }
 
 pub async fn fetch_system_notify(
-    cl: Arc<Client>,
-    csrf: Arc<String>,
+    api: Arc<ApiService>,
 ) -> Result<HashMap<u64, Notify>> {
     let mut h: HashMap<u64, Notify> = HashMap::new();
     let mut cursor = None;
@@ -285,16 +277,19 @@ pub async fn fetch_system_notify(
         let mut notifys: &Value;
         // first get
         if cursor.is_none() {
-            json = get_json(
-                cl.clone(),
-                format!("https://message.bilibili.com/x/sys-msg/query_user_notify?csrf={csrf}&csrf={csrf}&page_size=20&build=0&mobi_app=web"),
+            json = api.get_json(
+                format!("https://message.bilibili.com/x/sys-msg/query_user_notify?csrf={}&csrf={}&page_size=20&build=0&mobi_app=web",
+                api.csrf(), api.csrf()),
             )
-                .await?;
+            .await?;
             notifys = &json["data"]["system_notify_list"];
             // 第一种api（0）获取为空时
             if notifys.is_null() {
                 api_type = 1;
-                json = get_json(cl.clone(), format!("https://message.bilibili.com/x/sys-msg/query_unified_notify?csrf={csrf}&csrf={csrf}&page_size=10&build=0&mobi_app=web")).await?;
+                json = api.get_json(
+                    format!("https://message.bilibili.com/x/sys-msg/query_unified_notify?csrf={}&csrf={}&page_size=10&build=0&mobi_app=web",
+                    api.csrf(), api.csrf())
+                ).await?;
                 notifys = &json["data"]["system_notify_list"];
                 // 两者都为空
                 if notifys.is_null() {
@@ -306,8 +301,9 @@ pub async fn fetch_system_notify(
             cursor = notifys.as_array().unwrap().last().unwrap()["cursor"].as_u64();
         } else {
             let url =
-                format!("https://message.bilibili.com/x/sys-msg/query_notify_list?csrf={csrf}&data_type=1&cursor={}&build=0&mobi_app=web",cursor.unwrap());
-            json = get_json(cl.clone(), url).await?;
+                format!("https://message.bilibili.com/x/sys-msg/query_notify_list?csrf={}&data_type=1&cursor={}&build=0&mobi_app=web",
+                api.csrf(), cursor.unwrap());
+            json = api.get_json(url).await?;
             notifys = &json["data"];
             if json["data"].as_array().unwrap().is_empty() {
                 info!("系统通知处理完毕。通知数量：{}", h.len());

@@ -1,16 +1,15 @@
 use crate::http::comment::Comment;
 use crate::http::response::official::*;
-use crate::http::utility::fetch_data;
 use crate::types::{Error, Result};
 use indicatif::ProgressBar;
 use regex::Regex;
-use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 use tokio::try_join;
 use tracing::{info, warn};
+use crate::http::api_service::ApiService;
 
 static VIDEO_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"bilibili://video/(\d+)").unwrap());
@@ -61,7 +60,7 @@ fn parse_oid(detail: &NestedDetail) -> Result<(u64, u8)> {
         Err(Error::UnrecognizedURI(Arc::new(uri.clone())))?
     }
 }
-async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
+async fn fetch_liked(api: Arc<ApiService>) -> Result<HashMap<u64, Comment>> {
     let mut h = HashMap::new();
     let mut cursor_id = None;
     let mut cursor_time = None;
@@ -70,16 +69,21 @@ async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
     loop {
         let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            fetch_data::<like::ApiResponse>(
-                cl.clone(),
+            api.fetch_data::<like::ApiResponse>(
                 "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
             )
             .await?
             .data
             .total
         } else {
-            fetch_data::<like::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
-                .await?.data.total
+            api.fetch_data::<like::ApiResponse>(
+                format!("https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web&id={}&like_time={}",
+                cursor_id.unwrap(),
+                cursor_time.unwrap())
+            )
+            .await?
+            .data
+            .total
         };
         if let Some(c) = &res.cursor {
             cursor_id = Some(c.id);
@@ -118,7 +122,7 @@ async fn fetch_liked(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
     }
     Ok(h)
 }
-async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
+async fn fetch_replyed(api: Arc<ApiService>) -> Result<HashMap<u64, Comment>> {
     let mut h = HashMap::new();
     let mut cursor_id = None;
     let mut cursor_time = None;
@@ -127,15 +131,19 @@ async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
     loop {
         let res = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            fetch_data::<reply::ApiResponse>(
-                cl.clone(),
+            api.fetch_data::<reply::ApiResponse>(
                 "https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web",
             )
             .await?
             .data
         } else {
-            fetch_data::<reply::ApiResponse>(cl.clone(), format!("https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web&id={}&reply_time={}",cursor_id.unwrap(),cursor_time.unwrap()))
-                .await?.data
+            api.fetch_data::<reply::ApiResponse>(
+                format!("https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web&id={}&reply_time={}",
+                cursor_id.unwrap(),
+                cursor_time.unwrap())
+            )
+            .await?
+            .data
         };
         if let Some(c) = &res.cursor {
             cursor_id = Some(c.id);
@@ -181,8 +189,8 @@ async fn fetch_replyed(cl: Arc<Client>) -> Result<HashMap<u64, Comment>> {
 
 // 为什么没Ated Comment？因为我没数据测试了，半年前删完了
 
-pub async fn fetch(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>> {
-    let (mut h1, h2) = try_join!(fetch_liked(cl.clone()), fetch_replyed(cl.clone()))?;
+pub async fn fetch(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>> {
+    let (mut h1, h2) = try_join!(fetch_liked(api.clone()), fetch_replyed(api.clone()))?;
     h1.extend(h2.into_iter());
     Ok(Arc::new(Mutex::new(h1)))
 }

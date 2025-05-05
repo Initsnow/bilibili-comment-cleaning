@@ -1,16 +1,15 @@
 use crate::http::danmu::Danmu;
 use crate::http::response::official::like::ApiResponse;
-use crate::http::utility::fetch_data;
 use crate::types::Result;
 use iced::futures::stream::try_unfold;
 use iced::futures::{Stream, TryStreamExt};
 use indicatif::ProgressBar;
 use regex::Regex;
-use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
+use super::super::api_service::ApiService;
 
 fn extract_cid(native_uri: &str) -> Option<u64> {
     let re = Regex::new(r"cid=(\d+)").unwrap();
@@ -19,20 +18,20 @@ fn extract_cid(native_uri: &str) -> Option<u64> {
         .and_then(|m| m.as_str().parse::<u64>().ok())
 }
 
-fn create_liked_danmu_stream(client: Arc<Client>) -> impl Stream<Item = Result<Vec<(u64, Danmu)>>> {
+fn create_liked_danmu_stream(api: Arc<ApiService>) -> impl Stream<Item = Result<Vec<(u64, Danmu)>>> {
     try_unfold(
         Some(String::from(
             "https://api.bilibili.com/x/msgfeed/like?platform=web&build=0&mobi_app=web",
         )),
         move |url| {
-            let client = client.clone();
+            let api = api.clone();
             async move {
                 let url = if let Some(u) = url {
                     u
                 } else {
                     return Ok(None);
                 };
-                let response = fetch_data::<ApiResponse>(client, &url).await?;
+                let response = api.fetch_data::<ApiResponse>(&url).await?;
                 let data = response.data;
 
                 let mut results = vec![];
@@ -71,11 +70,11 @@ fn create_liked_danmu_stream(client: Arc<Client>) -> impl Stream<Item = Result<V
     )
 }
 
-pub async fn fetch(client: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> {
+pub async fn fetch(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> {
     let map = Arc::new(Mutex::new(HashMap::new()));
     let pb = ProgressBar::new_spinner();
 
-    let stream = create_liked_danmu_stream(client.clone());
+    let stream = create_liked_danmu_stream(api.clone());
     stream
         .try_for_each_concurrent(3, |e| {
             let map_cloned = map.clone();

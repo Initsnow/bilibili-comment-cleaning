@@ -1,7 +1,8 @@
 use crate::screens::{main, Screen};
+use bilibili_comment_cleaning::http::api_service::ApiService;
 use bilibili_comment_cleaning::http::notify;
 use bilibili_comment_cleaning::http::qr_code::QRdata;
-use bilibili_comment_cleaning::http::{comment, danmu};
+use bilibili_comment_cleaning::http::{comment, danmu,api_service};
 use bilibili_comment_cleaning::types::*;
 use bilibili_comment_cleaning::*;
 use iced::{Element, Subscription, Task};
@@ -35,8 +36,7 @@ fn main() -> iced::Result {
 
 #[derive(Debug)]
 struct App {
-    client: Arc<Client>,
-    csrf: Option<Arc<String>>,
+    api: Arc<ApiService>,
     screen: Screen,
     sender: Option<Sender<ChannelMsg>>,
     aicu_state: Arc<AtomicBool>,
@@ -46,12 +46,7 @@ impl App {
     fn new() -> (Self, Task<Message>) {
         let aicu_state = Arc::new(AtomicBool::new(true));
         let app=        App {
-            client: Arc::new(Client::builder().default_headers({
-                let mut headers = header::HeaderMap::new();
-                headers.insert("User-Agent", header::HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.2651.86"));
-                headers
-            }).cookie_store(true).build().unwrap()),
-            csrf: None,
+            api: Arc::new(ApiService::default()),
             screen: Screen::new(aicu_state.clone()),
             sender: None,
             aicu_state,
@@ -76,18 +71,15 @@ impl App {
                             t.map(Message::QRCode)
                         }
                         cookie::Action::Boot {
-                            client,
-                            csrf,
+                            api,
                             aicu_state,
                         } => {
-                            self.client = Arc::new(client);
-                            self.csrf = Some(Arc::new(csrf));
+                            self.api=Arc::new(api);
                             self.screen = Screen::Main(main::Main::new(aicu_state));
 
                             let sender_clone = self.sender.as_ref().unwrap().clone();
                             let fetch_task = fetch_task(
-                                self.client.clone(),
-                                self.csrf.as_ref().unwrap().clone(),
+                                self.api.clone(),
                                 aicu_state,
                             );
 
@@ -116,13 +108,12 @@ impl App {
                             Task::none()
                         }
                         qrcode::Action::Boot { csrf, aicu_state } => {
-                            self.csrf = Some(Arc::new(csrf));
+                            self.api=Arc::new(ApiService::new_with_fields(self.api.client().clone(), csrf));
                             self.screen = Screen::Main(main::Main::new(aicu_state));
 
                             if let Some(sender) = self.sender.clone() {
                                 let fetch_task = fetch_task(
-                                    self.client.clone(),
-                                    self.csrf.as_ref().unwrap().clone(),
+                                    self.api.clone(),
                                     aicu_state,
                                 );
                                 Task::batch([
@@ -145,11 +136,11 @@ impl App {
                             Task::none()
                         }
                         qrcode::Action::GetState(v) => {
-                            let cl = Arc::clone(&self.client);
+                            let api =self.api.clone();
                             Task::perform(
                                 async move {
                                     let v = v.lock().await;
-                                    v.get_state(cl).await
+                                    v.get_state(api).await
                                 },
                                 |a| Message::QRCode(qrcode::Message::QRcodeState(a)),
                             )
@@ -172,54 +163,44 @@ impl App {
                             comments,
                             sleep_seconds,
                         } => {
-                            let cl = Arc::clone(&self.client);
-                            let csrf = Arc::clone(self.csrf.as_ref().unwrap());
                             self.send_to_channel(ChannelMsg::DeleteComment(
-                                cl,
-                                csrf,
+                                self.api.clone(),
                                 comments,
                                 sleep_seconds,
                             ));
                             Task::none()
                         }
                         main::Action::RetryFetchComment => comment::fetch_via_aicu_state(
-                            self.client.clone(),
+                            self.api.clone(),
                             self.aicu_state.load(Ordering::SeqCst),
                         ),
                         main::Action::DeleteNotify {
                             notify,
                             sleep_seconds,
                         } => {
-                            let cl = Arc::clone(&self.client);
-                            let csrf = Arc::clone(self.csrf.as_ref().unwrap());
                             self.send_to_channel(ChannelMsg::DeleteNotify(
-                                cl,
-                                csrf,
+                                self.api.clone(),
                                 notify,
                                 sleep_seconds,
                             ));
                             Task::none()
                         }
                         main::Action::RetryFetchNotify => notify::fetch_task(
-                            self.client.clone(),
-                            self.csrf.as_ref().unwrap().clone(),
+                            self.api.clone(),
                         ),
                         main::Action::DeleteDanmu {
                             danmu,
                             sleep_seconds,
                         } => {
-                            let cl = Arc::clone(&self.client);
-                            let csrf = Arc::clone(self.csrf.as_ref().unwrap());
                             self.send_to_channel(ChannelMsg::DeleteDanmu(
-                                cl,
-                                csrf,
+                                self.api.clone(),
                                 danmu,
                                 sleep_seconds,
                             ));
                             Task::none()
                         }
                         main::Action::RetryFetchDanmu => danmu::fetch_via_aicu_state(
-                            self.client.clone(),
+                            self.api.clone(),
                             self.aicu_state.load(Ordering::SeqCst),
                         ),
                         main::Action::None => Task::none(),
@@ -253,9 +234,9 @@ impl App {
     }
 }
 
-fn fetch_task(cl: Arc<Client>, csrf: Arc<String>, aicu_state: bool) -> Task<Message> {
-    notify::fetch_task(cl.clone(), csrf.clone()).chain(
-        comment::fetch_via_aicu_state(cl.clone(), aicu_state)
-            .chain(danmu::fetch_via_aicu_state(cl.clone(), aicu_state)),
+fn fetch_task(api: Arc<ApiService>, aicu_state: bool) -> Task<Message> {
+    notify::fetch_task(api.clone()).chain(
+        comment::fetch_via_aicu_state(api.clone(), aicu_state)
+            .chain(danmu::fetch_via_aicu_state(api.clone(), aicu_state)),
     )
 }

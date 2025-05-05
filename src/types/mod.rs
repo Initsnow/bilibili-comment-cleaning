@@ -41,22 +41,19 @@ impl From<DvMsg> for Message {
 
 pub enum ChannelMsg {
     DeleteComment(
-        Arc<Client>,
-        Arc<String>,
+        Arc<super::http::api_service::ApiService>,
         Arc<Mutex<HashMap<u64, Comment>>>,
         f32,
     ),
     StopDeleteComment,
     DeleteNotify(
-        Arc<Client>,
-        Arc<String>,
+        Arc<super::http::api_service::ApiService>,
         Arc<Mutex<HashMap<u64, Notify>>>,
         f32,
     ),
     StopDeleteNotify,
     DeleteDanmu(
-        Arc<Client>,
-        Arc<String>,
+        Arc<super::http::api_service::ApiService>,
         Arc<Mutex<HashMap<u64, Danmu>>>,
         f32,
     ),
@@ -66,7 +63,7 @@ pub enum ChannelMsg {
 }
 
 pub trait RemoveAble {
-    async fn remove(&self, id: u64, cl: Arc<Client>, csrf: Arc<String>) -> Result<u64>;
+    async fn remove(&self, id: u64, api: Arc<super::http::api_service::ApiService>) -> Result<u64>;
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

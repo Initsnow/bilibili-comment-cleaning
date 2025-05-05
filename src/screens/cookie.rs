@@ -1,13 +1,12 @@
-use crate::http::utility::create_client;
 use crate::types::Result;
 use iced::{
     widget::{button, center, column, row, text_input, toggler, Space},
     Element, Length, Task,
 };
-use reqwest::Client;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::error;
+use crate::http::api_service::ApiService;
 
 #[derive(Debug)]
 pub struct Cookie {
@@ -19,7 +18,6 @@ pub struct Cookie {
 pub enum Message {
     CookieSubmited(String),
     CookieInputChanged(String),
-    ClientCreated(Result<(Client, String)>),
     AicuToggled(bool),
     EntertoQRcodeScan,
 }
@@ -27,8 +25,7 @@ pub enum Message {
 pub enum Action {
     Run(Task<Message>),
     Boot {
-        client: Client,
-        csrf: String,
+        api: ApiService,
         aicu_state: bool,
     },
     EnterQRCode,
@@ -70,26 +67,20 @@ impl Cookie {
     pub fn update(&mut self, msg: Message) -> Action {
         match msg {
             Message::CookieSubmited(s) => {
-                return Action::Run(Task::perform(create_client(s), Message::ClientCreated));
+                let api = ApiService::new(s);
+                return Action::Boot {
+                    api,
+                    aicu_state: self.aicu_state.load(Ordering::SeqCst),
+                };
             }
             Message::CookieInputChanged(s) => {
                 self.cookie = s;
-            }
-            Message::ClientCreated(Ok((client, csrf))) => {
-                return Action::Boot {
-                    client,
-                    csrf,
-                    aicu_state: self.aicu_state.load(Ordering::SeqCst),
-                };
             }
             Message::AicuToggled(b) => {
                 self.aicu_state.store(b, Ordering::SeqCst);
             }
             Message::EntertoQRcodeScan => {
                 return Action::EnterQRCode;
-            }
-            Message::ClientCreated(Err(e)) => {
-                error!("Client creation failed: {:?}", e);
             }
         }
         Action::None

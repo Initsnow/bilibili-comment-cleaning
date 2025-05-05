@@ -3,13 +3,13 @@ use crate::http::notify::Notify;
 use crate::screens::main;
 use crate::types::{Error, Message, RemoveAble, Result};
 use iced::Task;
-use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::try_join;
+use super::api_service::ApiService;
 
 pub mod aicu;
 pub mod official;
@@ -42,19 +42,14 @@ impl Danmu {
 }
 
 impl RemoveAble for Danmu {
-    async fn remove(&self, dmid: u64, cl: Arc<Client>, csrf: Arc<String>) -> Result<u64> {
-        let json_res: Value = cl
-            .post(
-                "
-    https://api.bilibili.com/x/msgfeed/del",
-            )
-            .form(&[
-                ("dmid", dmid.to_string()),
-                ("cid", self.cid.to_string()),
-                ("type", 1.to_string()),
-                ("csrf", csrf.to_string()),
-            ])
-            .send()
+    async fn remove(&self, dmid: u64, api: Arc<ApiService>) -> Result<u64> {
+        let form_data = [
+            ("dmid", dmid.to_string()),
+            ("cid", self.cid.to_string()),
+            ("type", 1.to_string()),
+            ("csrf", api.csrf().to_string()),
+        ];
+        let json_res: Value = api.post_form("https://api.bilibili.com/x/msgfeed/del", &form_data)
             .await?
             .error_for_status()?
             .json()
@@ -66,7 +61,7 @@ impl RemoveAble for Danmu {
         {
             if let Some(notify_id) = self.notify_id {
                 Notify::new(String::new(), 0)
-                    .remove(notify_id, cl, csrf)
+                    .remove(notify_id, api.clone())
                     .await?;
             }
             Ok(dmid)
@@ -76,8 +71,8 @@ impl RemoveAble for Danmu {
     }
 }
 
-async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> {
-    let (m1, m2) = try_join!(official::fetch(cl.clone()), aicu::fetch(cl.clone()))?;
+async fn fetch_both(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> {
+    let (m1, m2) = try_join!(official::fetch(api.clone()), aicu::fetch(api.clone()))?;
 
     let (m1, m2) = {
         let mut lock1 = m1.lock().await;
@@ -88,13 +83,13 @@ async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> 
     Ok(Arc::new(Mutex::new(m1.into_iter().chain(m2).collect())))
 }
 
-pub fn fetch_via_aicu_state(cl: Arc<Client>, aicu_state: bool) -> Task<Message> {
+pub fn fetch_via_aicu_state(api: Arc<ApiService>, aicu_state: bool) -> Task<Message> {
     if aicu_state {
-        Task::perform(fetch_both(cl), |e| {
+        Task::perform(fetch_both(api), |e| {
             Message::Main(main::Message::DanmuMsg(dvmsg::DanmusFetched(e)))
         })
     } else {
-        Task::perform(official::fetch(cl), |e| {
+        Task::perform(official::fetch(api), |e| {
             Message::Main(main::Message::DanmuMsg(dvmsg::DanmusFetched(e)))
         })
     }

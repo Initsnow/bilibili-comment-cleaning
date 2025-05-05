@@ -1,23 +1,21 @@
 use crate::http::comment::Comment;
 use crate::http::response::aicu::comment::ApiResponse;
-use crate::http::utility::{fetch_data, get_uid};
 use crate::types::Result;
 use indicatif::ProgressBar;
-use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::info;
+use crate::http::api_service::ApiService;
 
-pub async fn fetch(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>> {
-    let uid = get_uid(Arc::clone(&cl)).await?;
+pub async fn fetch(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>> {
+    let uid = api.get_uid().await?;
     let mut page = 1;
     let mut h = HashMap::new();
 
-    let all_count = fetch_data::<ApiResponse>(
-        cl.clone(),
+    let all_count = api.fetch_data::<ApiResponse>(
         format!("https://api.aicu.cc/api/v3/search/getreply?uid={uid}&pn=1&ps=0&mode=0&keyword=",),
     )
     .await?
@@ -29,11 +27,10 @@ pub async fn fetch(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>>
 
     info!("正在从aicu.cc获取评论...");
     loop {
-        let res = fetch_data::<ApiResponse>(
-            cl.clone(),
+        let res = api.fetch_data::<ApiResponse>(
             format!(
             "https://api.aicu.cc/api/v3/search/getreply?uid={uid}&pn={page}&ps=500&mode=0&keyword="
-        ),
+            ),
         )
         .await?
         .data;

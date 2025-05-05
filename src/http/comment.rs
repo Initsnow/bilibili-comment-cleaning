@@ -6,13 +6,13 @@ use crate::http::notify::Notify;
 use crate::screens::main;
 use crate::types::{Error, Message, RemoveAble, Result};
 use iced::Task;
-use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::try_join;
+use super::api_service::ApiService;
 
 #[derive(Debug, Default, Clone)]
 pub struct Comment {
@@ -47,30 +47,28 @@ impl Comment {
     }
 }
 impl RemoveAble for Comment {
-    async fn remove(&self, rpid: u64, cl: Arc<Client>, csrf: Arc<String>) -> Result<u64> {
+    async fn remove(&self, rpid: u64, api: Arc<ApiService>) -> Result<u64> {
         let json_res: Value = if self.r#type == 11 {
-            cl.post(format!(
-                "https://api.bilibili.com/x/v2/reply/del?csrf={}",
-                csrf.clone()
-            ))
-            .form(&[
+            let form_data = [
                 ("oid", self.oid.to_string()),
                 ("type", self.r#type.to_string()),
                 ("rpid", rpid.to_string()),
-            ])
-            .send()
+            ];
+            api.post_form(
+                format!("https://api.bilibili.com/x/v2/reply/del?csrf={}", api.csrf()),
+                &form_data
+            )
             .await?
             .json()
             .await?
         } else {
-            cl.post("https://api.bilibili.com/x/v2/reply/del")
-                .form(&[
-                    ("oid", self.oid.to_string()),
-                    ("type", self.r#type.to_string()),
-                    ("rpid", rpid.to_string()),
-                    ("csrf", csrf.to_string()),
-                ])
-                .send()
+            let form_data = [
+                ("oid", self.oid.to_string()),
+                ("type", self.r#type.to_string()),
+                ("rpid", rpid.to_string()),
+                ("csrf", api.csrf().to_string()),
+            ];
+            api.post_form("https://api.bilibili.com/x/v2/reply/del", &form_data)
                 .await?
                 .json()
                 .await?
@@ -79,7 +77,7 @@ impl RemoveAble for Comment {
             // 如果is_some则删除通知
             if let Some(notify_id) = self.notify_id {
                 Notify::new(String::new(), self.tp.unwrap())
-                    .remove(notify_id, cl, csrf)
+                    .remove(notify_id, api.clone())
                     .await?;
             }
             Ok(rpid)
@@ -89,8 +87,8 @@ impl RemoveAble for Comment {
     }
 }
 
-pub async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>> {
-    let (m1, m2) = try_join!(official::fetch(cl.clone()), aicu::fetch(cl.clone()))?;
+pub async fn fetch_both(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Comment>>>> {
+    let (m1, m2) = try_join!(official::fetch(api.clone()), aicu::fetch(api.clone()))?;
 
     let (m1, m2) = {
         let mut lock1 = m1.lock().await;
@@ -101,13 +99,13 @@ pub async fn fetch_both(cl: Arc<Client>) -> Result<Arc<Mutex<HashMap<u64, Commen
     Ok(Arc::new(Mutex::new(m1.into_iter().chain(m2).collect())))
 }
 
-pub fn fetch_via_aicu_state(cl: Arc<Client>, aicu_state: bool) -> Task<Message> {
+pub fn fetch_via_aicu_state(api: Arc<ApiService>, aicu_state: bool) -> Task<Message> {
     if aicu_state {
-        Task::perform(fetch_both(cl), |e| {
+        Task::perform(fetch_both(api), |e| {
             Message::Main(main::Message::CommentMsg(cvmsg::CommentsFetched(e)))
         })
     } else {
-        Task::perform(official::fetch(cl), |e| {
+        Task::perform(official::fetch(api), |e| {
             Message::Main(main::Message::CommentMsg(cvmsg::CommentsFetched(e)))
         })
     }

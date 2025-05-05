@@ -2,7 +2,7 @@ use iced::futures::channel::mpsc::Sender;
 use iced::futures::SinkExt;
 use iced::{stream, Subscription};
 use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::Client;
+use http::api_service::ApiService;
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,6 +22,8 @@ pub use crate::screens::main::notify_viewer::NvMsg as nvmsg;
 
 use crate::screens::{main, qrcode};
 use crate::types::{ChannelMsg, Message, RemoveAble};
+
+const UA:&str="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.2651.86";
 
 enum Type {
     Comment,
@@ -45,8 +47,7 @@ async fn handle_delete<T>(
     items: Vec<(u64, T)>,
     tp: Type,
     seconds: f32,
-    client: Arc<Client>,
-    csrf: Arc<String>,
+    api: Arc<ApiService>,
 ) where
     T: RemoveAble,
 {
@@ -71,7 +72,7 @@ async fn handle_delete<T>(
             output.send(msg_done.clone()).await.unwrap();
             break;
         }
-        match data.remove(id, client.clone(), csrf.clone()).await {
+        match data.remove(id, api.clone()).await {
             Ok(id) => {
                 output
                     .send(match tp {
@@ -129,7 +130,7 @@ pub fn main_subscription() -> Subscription<Message> {
 
             while let Some(msg) = receiver.recv().await {
                 match msg {
-                    ChannelMsg::DeleteComment(cl, csrf, c, seconds) => {
+                    ChannelMsg::DeleteComment(api, c, seconds) => {
                         let comments = c
                             .lock()
                             .await
@@ -146,15 +147,14 @@ pub fn main_subscription() -> Subscription<Message> {
                             comments,
                             Type::Comment,
                             seconds,
-                            cl.clone(),
-                            csrf.clone(),
+                            api.clone(),
                         ));
                         tasks.0 = Some(task);
                     }
                     ChannelMsg::StopDeleteComment => {
                         flags.1.store(false, Ordering::SeqCst);
                     }
-                    ChannelMsg::DeleteNotify(cl, csrf, c, seconds) => {
+                    ChannelMsg::DeleteNotify(api, c, seconds) => {
                         let notify = c
                             .lock()
                             .await
@@ -171,15 +171,14 @@ pub fn main_subscription() -> Subscription<Message> {
                             notify,
                             Type::Notify,
                             seconds,
-                            cl.clone(),
-                            csrf.clone(),
+                            api.clone(),
                         ));
                         tasks.1 = Some(task);
                     }
                     ChannelMsg::StopDeleteNotify => {
                         flags.2.store(false, Ordering::SeqCst);
                     }
-                    ChannelMsg::DeleteDanmu(cl, csrf, c, seconds) => {
+                    ChannelMsg::DeleteDanmu(api, c, seconds) => {
                         let danmu = c
                             .lock()
                             .await
@@ -196,8 +195,7 @@ pub fn main_subscription() -> Subscription<Message> {
                             danmu,
                             Type::Danmu,
                             seconds,
-                            cl.clone(),
-                            csrf.clone(),
+                            api.clone(),
                         ));
                         tasks.2 = Some(task);
                     }

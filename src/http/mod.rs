@@ -4,3 +4,4 @@ pub mod notify;
 pub mod qr_code;
 pub mod response;
 pub mod utility;
+pub mod api_service;
