@@ -76,17 +76,9 @@ async fn handle_delete<T>(
             Ok(id) => {
                 output
                     .send(match tp {
-                        Type::Comment => {
-                            Message::Main(main::Message::CommentMsg(cvmsg::CommentDeleted {
-                                rpid: id,
-                            }))
-                        }
-                        Type::Danmu => {
-                            Message::Main(main::Message::DanmuMsg(dvmsg::DanmuDeleted { id }))
-                        }
-                        Type::Notify => {
-                            Message::Main(main::Message::NotifyMsg(nvmsg::NotifyDeleted { id }))
-                        }
+                        Type::Comment => cvmsg::CommentDeleted { rpid: id }.into(),
+                        Type::Danmu => dvmsg::DanmuDeleted { id }.into(),
+                        Type::Notify => nvmsg::NotifyDeleted { id }.into(),
                     })
                     .await
                     .unwrap();

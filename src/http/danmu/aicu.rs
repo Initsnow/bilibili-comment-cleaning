@@ -1,6 +1,7 @@
 use crate::http::api_service::ApiService;
 use crate::http::danmu::Danmu;
 use crate::http::response::aicu::danmu::ApiResponse;
+use crate::http::utility::video_info::get_cid;
 use crate::types::Result;
 use indicatif::ProgressBar;
 use std::collections::HashMap;
@@ -34,15 +35,7 @@ pub async fn fetch(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Danmu>
             )
         ).await?.data;
         for i in res.videodmlist {
-            // 获取cid的逻辑需要修改为使用ApiService
-            let cid = api
-                .fetch_data::<crate::http::utility::video_info::PageList>(format!(
-                    "https://api.bilibili.com/x/player/pagelist?aid={}",
-                    i.oid
-                ))
-                .await?
-                .data
-                .map(|e| e[0].cid);
+            let cid = get_cid(api.clone(), i.oid).await?;
             if let Some(cid) = cid {
                 h.insert(i.id, Danmu::new(i.content, cid));
                 pb.inc(1);

@@ -1,4 +1,7 @@
-use crate::{types::Result, UA};
+use crate::{
+    types::{Error, Result},
+    UA,
+};
 use reqwest::{header, Client, IntoUrl, Response};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -28,8 +31,8 @@ impl Default for ApiService {
 }
 
 impl ApiService {
-    pub fn new(ck: String) -> Self {
-        let a = ck.find("bili_jct=").unwrap();
+    pub fn new(ck: String) -> Result<Self> {
+        let a = ck.find("bili_jct=").ok_or(Error::CreateApiServiceError)?;
         let b = ck[a..].find(";").unwrap();
         let csrf = ck[a + 9..b + a].to_string();
 
@@ -42,7 +45,7 @@ impl ApiService {
             .build()
             .unwrap();
 
-        Self { client, csrf }
+        Ok(Self { client, csrf })
     }
 
     pub fn new_with_fields(client: Client, csrf: String) -> Self {

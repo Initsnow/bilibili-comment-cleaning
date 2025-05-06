@@ -14,13 +14,13 @@ pub mod video_info {
     }
 
     #[derive(Deserialize)]
-    pub struct PageList {
-        pub data: Option<Vec<Item>>,
+    struct PageList {
+        data: Option<Vec<Item>>,
     }
 
     #[derive(Deserialize)]
-    pub struct Item {
-        pub cid: u64,
+    struct Item {
+        cid: u64,
         // snip
     }
 }

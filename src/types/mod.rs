@@ -60,7 +60,11 @@ pub enum ChannelMsg {
 }
 
 pub trait RemoveAble {
-    async fn remove(&self, id: u64, api: Arc<super::http::api_service::ApiService>) -> Result<u64>;
+    fn remove(
+        &self,
+        id: u64,
+        api: Arc<super::http::api_service::ApiService>,
+    ) -> impl std::future::Future<Output = Result<u64>> + Send;
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -82,6 +86,8 @@ pub enum Error {
     DeleteNotifyError(Arc<serde_json::Value>),
     #[error("Failed to delete system notify, Response json: {0}")]
     DeleteSystemNotifyError(Arc<serde_json::Value>),
+    #[error("Failed to create api service, cookie didn't contain bili_jct")]
+    CreateApiServiceError,
 }
 impl From<reqwest::Error> for Error {
     fn from(error: reqwest::Error) -> Self {

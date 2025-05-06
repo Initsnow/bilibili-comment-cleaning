@@ -1,12 +1,12 @@
-use crate::screens::{main, Screen};
-use bilibili_comment_cleaning::http::api_service::ApiService;
-use bilibili_comment_cleaning::http::notify;
-use bilibili_comment_cleaning::http::qr_code::QRdata;
-use bilibili_comment_cleaning::http::{comment, danmu};
-use bilibili_comment_cleaning::types::*;
-use bilibili_comment_cleaning::*;
+use bilibili_comment_cleaning::http::{
+    api_service::ApiService, comment, danmu, notify, qr_code::QRdata,
+};
+use bilibili_comment_cleaning::{
+    main_subscription,
+    screens::{cookie, main, qrcode, Screen},
+    types::*,
+};
 use iced::{time, Element, Subscription, Task};
-use screens::{cookie, qrcode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;

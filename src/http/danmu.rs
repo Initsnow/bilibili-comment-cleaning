@@ -1,7 +1,6 @@
 use super::api_service::ApiService;
 use crate::dvmsg;
 use crate::http::notify::Notify;
-use crate::screens::main;
 use crate::types::{Error, Message, RemoveAble, Result};
 use iced::Task;
 use serde_json::Value;
@@ -82,12 +81,8 @@ async fn fetch_both(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Danmu
 
 pub fn fetch_via_aicu_state(api: Arc<ApiService>, aicu_state: bool) -> Task<Message> {
     if aicu_state {
-        Task::perform(fetch_both(api), |e| {
-            Message::Main(main::Message::DanmuMsg(dvmsg::DanmusFetched(e)))
-        })
+        Task::perform(fetch_both(api), |e| dvmsg::DanmusFetched(e).into())
     } else {
-        Task::perform(official::fetch(api), |e| {
-            Message::Main(main::Message::DanmuMsg(dvmsg::DanmusFetched(e)))
-        })
+        Task::perform(official::fetch(api), |e| dvmsg::DanmusFetched(e).into())
     }
 }

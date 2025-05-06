@@ -4,7 +4,6 @@ pub mod official;
 use super::api_service::ApiService;
 use crate::cvmsg;
 use crate::http::notify::Notify;
-use crate::screens::main;
 use crate::types::{Error, Message, RemoveAble, Result};
 use iced::Task;
 use serde_json::Value;
@@ -104,12 +103,8 @@ pub async fn fetch_both(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, C
 
 pub fn fetch_via_aicu_state(api: Arc<ApiService>, aicu_state: bool) -> Task<Message> {
     if aicu_state {
-        Task::perform(fetch_both(api), |e| {
-            Message::Main(main::Message::CommentMsg(cvmsg::CommentsFetched(e)))
-        })
+        Task::perform(fetch_both(api), |e| cvmsg::CommentsFetched(e).into())
     } else {
-        Task::perform(official::fetch(api), |e| {
-            Message::Main(main::Message::CommentMsg(cvmsg::CommentsFetched(e)))
-        })
+        Task::perform(official::fetch(api), |e| cvmsg::CommentsFetched(e).into())
     }
 }

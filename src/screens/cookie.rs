@@ -5,6 +5,7 @@ use iced::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tracing::error;
 
 #[derive(Debug)]
 pub struct Cookie {
@@ -63,10 +64,17 @@ impl Cookie {
         match msg {
             Message::CookieSubmited(s) => {
                 let api = ApiService::new(s);
-                return Action::Boot {
-                    api,
-                    aicu_state: self.aicu_state.load(Ordering::SeqCst),
-                };
+                match api {
+                    Ok(api) => {
+                        return Action::Boot {
+                            api,
+                            aicu_state: self.aicu_state.load(Ordering::SeqCst),
+                        };
+                    }
+                    Err(e) => {
+                        error!("{}", e)
+                    }
+                }
             }
             Message::CookieInputChanged(s) => {
                 self.cookie = s;

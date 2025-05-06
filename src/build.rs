@@ -45,7 +45,7 @@ fn version_string_to_u64(version_str: &str) -> Result<u64, Box<dyn std::error::E
 #[cfg(target_os = "windows")]
 fn create_file_version_string(version_str: &str) -> String {
     let parts: Vec<&str> = version_str.split('.').collect();
-    let major = parts.get(0).cloned().unwrap_or("0");
+    let major = parts.first().cloned().unwrap_or("0");
     let minor = parts.get(1).cloned().unwrap_or("0");
     let patch = parts.get(2).cloned().unwrap_or("0");
     let build = "0"; // 添加 build 号 0
