@@ -101,7 +101,11 @@ impl ApiService {
     pub async fn get_uid(&self) -> Result<u64> {
         let json_res = self
             .get_json("https://api.bilibili.com/x/member/web/account")
-            .await?;
+            .await
+            .map_err(|e| match e {
+                Error::RequestFailed(inner) => Error::GetUIDError(inner),
+                other => other,
+            })?;
         let uid = json_res["data"]["mid"].as_u64().unwrap();
         Ok(uid)
     }

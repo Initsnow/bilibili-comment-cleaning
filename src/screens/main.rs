@@ -11,6 +11,9 @@ use crate::types::ChannelMsg;
 use crate::types::FetchProgressState;
 use crate::types::Result;
 use comment_viewer::CommentViewer;
+use iced::widget::center;
+use iced::widget::column;
+use iced::Alignment;
 use iced::Task;
 use iced::{
     widget::{button, container, pane_grid, row, text},
@@ -31,6 +34,7 @@ pub struct Main {
     pub aicu_state: bool,
     error: Option<String>,
     pub progress: FetchProgressState,
+    could_continue: bool,
 }
 impl fmt::Debug for Main {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -74,7 +78,7 @@ pub enum Message {
             Option<FetchProgressState>,
         )>,
     ),
-
+    RetryFetch,
     RefreshUI(()),
 }
 
@@ -127,6 +131,7 @@ impl Main {
             aicu_state,
             error: None,
             progress: FetchProgressState::default(),
+            could_continue: false,
         }
     }
     pub fn update(&mut self, message: Message) -> Action {
@@ -152,18 +157,25 @@ impl Main {
 
             Message::Fetched(res) => {
                 if let Ok((arc_tuple, progress)) = res {
-                    if let Some(arc_tuple) = arc_tuple {
-                        let (notify, comments, danmu) = Arc::as_ref(&arc_tuple);
-                        self.nv.notify = Some(Arc::new(Mutex::new(notify.clone())));
-                        self.cv.comments = Some(Arc::new(Mutex::new(comments.clone())));
-                        self.dv.danmu = Some(Arc::new(Mutex::new(danmu.clone())));
-                    }
                     if let Some(p) = progress {
                         self.progress = p;
+                        self.could_continue = true;
+                    } else {
+                        if let Some(arc_tuple) = arc_tuple {
+                            let (notify, comments, danmu) = Arc::as_ref(&arc_tuple);
+                            self.could_continue = false;
+                            self.nv.notify = Some(Arc::new(Mutex::new(notify.clone())));
+                            self.cv.comments = Some(Arc::new(Mutex::new(comments.clone())));
+                            self.dv.danmu = Some(Arc::new(Mutex::new(danmu.clone())));
+                        }
                     }
                 } else {
                     self.error = Some(format!("{:?}", res.err()));
                 }
+            }
+            Message::RetryFetch => {
+                self.error = None;
+                return Action::RetryFetch;
             }
 
             Message::RefreshUI(_) => {}
@@ -172,10 +184,26 @@ impl Main {
     }
     pub fn view(&self) -> Element<'_, Message> {
         if let Some(ref e) = self.error {
-            return container(
-                text(e)
-                    .shaping(text::Shaping::Advanced)
-                    .color(iced::Color::from_rgb(1.0, 0.0, 0.0)),
+            return center(
+                column![
+                    text(e)
+                        .shaping(text::Shaping::Advanced)
+                        .color(iced::Color::from_rgb(1.0, 0.0, 0.0)),
+                    button(text("Retry")).on_press(Message::RetryFetch),
+                ]
+                .align_x(Alignment::Center)
+                .spacing(3),
+            )
+            .into();
+        }
+        if self.could_continue {
+            return center(
+                column![
+                    text("Some anticipated errors occurred, but they were recoverable."),
+                    button("Continue").on_press(Message::RetryFetch),
+                ]
+                .align_x(Alignment::Center)
+                .spacing(3),
             )
             .into();
         }

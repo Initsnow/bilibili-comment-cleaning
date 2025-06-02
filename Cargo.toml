@@ -1,6 +1,6 @@
 [package]
 name = "bilibili-comment-cleaning"
-version = "0.6.114"
+version = "0.7.0"
 authors = ["Initsnow <inksnow2233@gmail.com>"]
 build = "src/build.rs"
 edition = "2021"

@@ -187,17 +187,17 @@ pub async fn fetch(
 
         let (n, recovery) = fetch_system_notify_adapted(
             api.clone(),
-            std::mem::take(&mut progress_state.ated_data),
+            std::mem::take(&mut progress_state.system_notify_data),
             progress_state.system_notify_recovery.clone(),
         )
         .await?;
         progress_state.system_notify_data = n;
         progress_state.system_notify_recovery = recovery;
-        if progress_state.replyed_recovery.is_some() {
+        if progress_state.system_notify_recovery.is_some() {
             info!("System notify fetching interrupted. Saving progress.");
             return Ok((None, Some(progress_state)));
         }
-        info!("System notifya fetched completely.");
+        info!("System notify fetched completely.");
     } else {
         info!("Skipping system notify, already fetched.");
     }
@@ -221,30 +221,25 @@ pub async fn fetch(
             match comment::aicu::fetch_adapted(api.clone(), current_aicu_comments, recovery_opt)
                 .await
             {
-                Ok((updated_comments, next_recovery_opt)) => {
-                    progress_state.aicu_comment_data = updated_comments;
-                    progress_state.aicu_comment_recovery = next_recovery_opt;
-
-                    if progress_state.aicu_comment_recovery.is_some() {
-                        info!("AICU comment fetching interrupted. Saving progress.");
-
-                        return Ok((None, Some(progress_state)));
-                    }
-                    info!("AICU comments fetched completely.");
+                Ok((c, r)) => {
+                    progress_state.aicu_comment_data = c;
+                    progress_state.aicu_comment_recovery = r;
+                    progress_state.aicu_enabled_last_run = true;
                 }
                 Err(e) => {
-                    // This error is from fetch_adapted itself (e.g., initial UID fetch failed).
-                    // It's likely unrecoverable for this session of `fetch`.
-                    warn!("Unrecoverable error during AICU comment fetch: {:?}. Aborting AICU comment fetch for this run.", e);
-                    // Restore the data that was taken, if possible, though fetch_adapted might have modified it.
-                    // For simplicity, we'll assume that if fetch_adapted returns Err, the data it was given
-                    // might be in an inconsistent state or it's best not to reuse it directly without careful handling.
-                    // The recovery point in progress_state remains as it was before this attempt.
-                    // The main fetch might continue with other data types or propagate this error.
-                    // If this specific error should halt the entire `fetch` operation:
+                    if let Error::GetUIDError(_) = e {
+                        warn!("{}", e);
+                        info!("AICU comment fetching interrupted. Saving progress.");
+                        return Ok((None, Some(progress_state)));
+                    }
                     return Err(e);
                 }
             }
+            if progress_state.aicu_comment_recovery.is_some() {
+                info!("AICU comment fetching interrupted. Saving progress.");
+                return Ok((None, Some(progress_state)));
+            }
+            info!("AICU comments fetched completely.");
         } else {
             info!("Skipping AICU comments (already fetched or not meeting fetch criteria).");
         }
@@ -261,30 +256,32 @@ pub async fn fetch(
             let recovery_opt = progress_state.aicu_danmu_recovery.clone();
 
             match danmu::aicu::fetch_adapted(api.clone(), current_aicu_danmus, recovery_opt).await {
-                Ok((updated_danmus, next_recovery_opt)) => {
-                    progress_state.aicu_danmu_data = updated_danmus;
-                    progress_state.aicu_danmu_recovery = next_recovery_opt;
-
-                    if progress_state.aicu_danmu_recovery.is_some() {
+                Ok((c, r)) => {
+                    progress_state.aicu_danmu_data = c;
+                    progress_state.aicu_danmu_recovery = r;
+                    progress_state.aicu_enabled_last_run = true;
+                }
+                Err(e) => {
+                    if let Error::GetUIDError(_) = e {
+                        warn!("{}", e);
                         info!("AICU danmu fetching interrupted. Saving progress.");
                         return Ok((None, Some(progress_state)));
                     }
-                    info!("AICU danmus fetched completely.");
-                }
-                Err(e) => {
-                    warn!("Unrecoverable error during AICU danmu fetch: {:?}. Aborting AICU danmu fetch for this run.", e);
-                    // Similar error handling considerations as for comments.
-                    // If this specific error should halt the entire `fetch` operation:
                     return Err(e);
                 }
             }
+
+            if progress_state.aicu_danmu_recovery.is_some() {
+                info!("AICU danmu fetching interrupted. Saving progress.");
+                return Ok((None, Some(progress_state)));
+            }
+            info!("AICU danmus fetched completely.");
         } else {
             info!("Skipping AICU danmus (already fetched or not meeting fetch criteria).");
         }
 
         // If aicu_state is true, and we've gone through the fetching logic (even if skipped),
         // then for the *next* run, aicu_enabled_last_run should reflect that AICU was enabled in *this* run.
-        progress_state.aicu_enabled_last_run = true;
     } else {
         // aicu_state is false
         if progress_state.aicu_enabled_last_run {

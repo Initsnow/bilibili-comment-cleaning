@@ -88,6 +88,8 @@ pub enum Error {
     DeleteSystemNotifyError(Arc<serde_json::Value>),
     #[error("Failed to create api service, cookie didn't contain bili_jct")]
     CreateApiServiceError,
+    #[error("Failed to get uid: {0}")]
+    GetUIDError(Arc<reqwest::Error>),
 }
 impl From<reqwest::Error> for Error {
     fn from(error: reqwest::Error) -> Self {

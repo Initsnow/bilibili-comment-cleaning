@@ -118,7 +118,7 @@ impl QRCode {
                 Err(e) => {
                     self.qr_code_state = None;
                     let e = format!("Failed to get QRCode state: {:#?}", e);
-                    error!("{:?}", e);
+                    error!("{}", e);
                     self.error = Some(e);
                 }
             },
@@ -127,7 +127,7 @@ impl QRCode {
             }
             Message::QRcodeGot(Err(e)) => {
                 let e = format!("Failed to fetch QRCode: {:#?}", e);
-                error!("{:?}", e);
+                error!("{}", e);
                 self.error = Some(e);
             }
         }
