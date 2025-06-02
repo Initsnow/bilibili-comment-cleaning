@@ -6,7 +6,7 @@ use super::danmu::{self, Danmu};
 use super::response::official::{
     ContinuationSystemNotifyApiResponse, InitialSystemNotifyApiResponse, SystemNotifyItem,
 };
-use crate::http::response::official::{like, reply};
+use crate::http::response::official::{like, reply, at};
 use crate::screens::main;
 use crate::types::{
     AtedRecovery, Error, FetchProgressState, LikedRecovery, Message, RemoveAble, ReplyedRecovery,
@@ -688,12 +688,12 @@ pub async fn fetch_ated(
     loop {
         let api_call_result = if cursor_id.is_none() && cursor_time.is_none() {
             // 第一次请求
-            api.fetch_data::<reply::ApiResponse>(
+            api.fetch_data::<at::ApiResponse>(
                 "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web",
             )
             .await
         } else {
-            api.fetch_data::<reply::ApiResponse>(format!(
+            api.fetch_data::<at::ApiResponse>(format!(
                 "https://api.bilibili.com/x/msgfeed/at?build=0&mobi_app=web&id={}&at_time={}",
                 cursor_id.unwrap(),
                 cursor_time.unwrap()
