@@ -3,7 +3,7 @@
 use crate::http::api_service::ApiService;
 use crate::http::comment::Comment; // Assuming Comment::new(oid, type, message) exists
 use crate::http::response::aicu::comment::ApiResponse as AicuCommentApiResponse; // Renamed for clarity
-use crate::types::{AicuCommentRecovery, Error, Result}; // Your project's Result and Error types
+use crate::types::{AicuCommentRecovery, Result}; // Your project's Result and Error types
 use indicatif::ProgressBar;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -104,17 +104,14 @@ pub async fn fetch_adapted(
                     // Assuming rpid is unique and suitable as a key.
                     // If a comment with this rpid already exists, this will overwrite it.
                     // This is usually fine if data from API is canonical for that rpid.
-                    if !current_comment_data.contains_key(&item.rpid) {
+                    if let std::collections::hash_map::Entry::Vacant(e) = current_comment_data.entry(item.rpid) {
                         // Ensure dyn and type are accessible. The original code used i.r#dyn.oid and i.r#dyn.r#type.
                         // Adjust if the structure of AicuCommentApiResponse.replies.item is different.
                         // Assuming item.r#dyn.oid and item.r#dyn.r#type are correct paths.
                         // Also ensure Comment::new takes these types.
                         // If item.r#dyn or item.r#dyn.r#type can be None, you'll need to handle that.
                         // For simplicity, assuming they are always present based on original code.
-                        current_comment_data.insert(
-                            item.rpid,
-                            Comment::new(item.r#dyn.oid, item.r#dyn.r#type, item.message),
-                        );
+                        e.insert(Comment::new(item.r#dyn.oid, item.r#dyn.r#type, item.message));
                         pb.inc(1);
                     }
                 }

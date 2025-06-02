@@ -1,6 +1,5 @@
-use bilibili_comment_cleaning::http::comment::aicu;
 use bilibili_comment_cleaning::http::{
-    api_service::ApiService, comment, danmu, notify, qr_code::QRdata,
+    api_service::ApiService, notify, qr_code::QRdata,
 };
 use bilibili_comment_cleaning::{
     main_subscription,

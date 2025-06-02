@@ -419,7 +419,7 @@ pub async fn fetch_liked(
                 //     ));
                 // }
                 if res.items.is_empty()
-                    && (res.cursor.is_none() || res.cursor.as_ref().map_or(false, |c| c.is_end))
+                    && (res.cursor.is_none() || res.cursor.as_ref().is_some_and(|c| c.is_end))
                 {
                     info!("被点赞的通知处理完毕");
                     return Ok((
@@ -489,7 +489,7 @@ pub async fn fetch_liked(
                 cursor_id = new_cursor_id; // Update cursors for the next loop iteration
                 cursor_time = new_cursor_time;
 
-                if res.cursor.as_ref().map_or(true, |c| c.is_end) {
+                if res.cursor.as_ref().is_none_or(|c| c.is_end) {
                     // No cursor or is_end
                     info!("被点赞的通知处理完毕。");
                     return Ok((
@@ -588,7 +588,7 @@ pub async fn fetch_replyed(
                 let new_cursor_id = res.cursor.as_ref().map(|c| c.id);
                 let new_cursor_time = res.cursor.as_ref().map(|c| c.time);
 
-                if res.items.is_empty() && res.cursor.as_ref().map_or(true, |c| c.is_end)
+                if res.items.is_empty() && res.cursor.as_ref().is_none_or(|c| c.is_end)
                 // No cursor or is_end
                 {
                     info!("被评论的通知处理完毕。");
@@ -642,7 +642,7 @@ pub async fn fetch_replyed(
                 cursor_id = new_cursor_id;
                 cursor_time = new_cursor_time;
 
-                if res.cursor.as_ref().map_or(true, |c| c.is_end) {
+                if res.cursor.as_ref().is_none_or(|c| c.is_end) {
                     // No cursor or is_end
                     info!("被评论的通知处理完毕。");
                     return Ok((current_notify_data, current_comment_data, None));
@@ -706,7 +706,7 @@ pub async fn fetch_ated(
                 let res = response_data.data;
                 let new_cursor_id = res.cursor.as_ref().map(|c| c.id);
                 let new_cursor_time = res.cursor.as_ref().map(|c| c.time);
-                let cursor_is_end_or_none = res.cursor.as_ref().map_or(true, |c| c.is_end);
+                let cursor_is_end_or_none = res.cursor.as_ref().is_none_or(|c| c.is_end);
                 if res.items.is_empty() && cursor_is_end_or_none {
                     info!("被At的通知处理完毕。");
                     break;

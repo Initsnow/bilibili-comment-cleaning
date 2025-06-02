@@ -1,7 +1,7 @@
 use crate::http::notify::Notify;
 use crate::main;
 use crate::main::Action;
-use crate::types::{ChannelMsg, Result};
+use crate::types::ChannelMsg;
 use iced::widget::{
     button, center, checkbox, column, row, scrollable, text, text_input, tooltip, Space,
 };
@@ -9,7 +9,6 @@ use iced::{Alignment, Element, Length, Task};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::error;
 
 #[derive(Debug)]
 pub struct NotifyViewer {

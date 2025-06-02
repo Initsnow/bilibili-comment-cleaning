@@ -160,14 +160,12 @@ impl Main {
                     if let Some(p) = progress {
                         self.progress = p;
                         self.could_continue = true;
-                    } else {
-                        if let Some(arc_tuple) = arc_tuple {
-                            let (notify, comments, danmu) = Arc::as_ref(&arc_tuple);
-                            self.could_continue = false;
-                            self.nv.notify = Some(Arc::new(Mutex::new(notify.clone())));
-                            self.cv.comments = Some(Arc::new(Mutex::new(comments.clone())));
-                            self.dv.danmu = Some(Arc::new(Mutex::new(danmu.clone())));
-                        }
+                    } else if let Some(arc_tuple) = arc_tuple {
+                        let (notify, comments, danmu) = Arc::as_ref(&arc_tuple);
+                        self.could_continue = false;
+                        self.nv.notify = Some(Arc::new(Mutex::new(notify.clone())));
+                        self.cv.comments = Some(Arc::new(Mutex::new(comments.clone())));
+                        self.dv.danmu = Some(Arc::new(Mutex::new(danmu.clone())));
                     }
                 } else {
                     self.error = Some(format!("{:?}", res.err()));

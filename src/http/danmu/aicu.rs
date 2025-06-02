@@ -4,7 +4,7 @@ use crate::http::api_service::ApiService;
 use crate::http::danmu::Danmu; // Assuming Danmu::new(content, cid) exists
 use crate::http::response::aicu::danmu::ApiResponse as AicuDanmuApiResponse; // Renamed for clarity
 use crate::http::utility::video_info::get_cid;
-use crate::types::{AicuDanmuRecovery, Error, Result}; // Your project's Result and Error types
+use crate::types::{AicuDanmuRecovery, Result}; // Your project's Result and Error types
 use indicatif::ProgressBar;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -108,12 +108,11 @@ pub async fn fetch_adapted(
                 for item in data_segment.videodmlist {
                     // Avoid re-fetching cid if danmu item.id is already present,
                     // though AICU IDs should be unique.
-                    if !current_danmu_data.contains_key(&item.id) {
-                        match get_cid(api.clone(), item.oid.clone()).await {
+                    if let std::collections::hash_map::Entry::Vacant(e) = current_danmu_data.entry(item.id) {
+                        match get_cid(api.clone(), item.oid).await {
                             // Clone oid if it's a String
                             Ok(Some(cid_val)) => {
-                                current_danmu_data
-                                    .insert(item.id, Danmu::new(item.content, cid_val));
+                                e.insert(Danmu::new(item.content, cid_val));
                                 pb.inc(1);
                             }
                             Ok(None) => {
