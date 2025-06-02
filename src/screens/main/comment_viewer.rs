@@ -37,7 +37,6 @@ pub enum CvMsg {
     CommentDeleted { rpid: u64 },
     AllCommentDeleted,
     CommentsFetched(crate::types::Result<Arc<Mutex<HashMap<u64, Comment>>>>),
-    RetryFetchComment,
 }
 impl Default for CommentViewer {
     fn default() -> Self {
@@ -130,17 +129,10 @@ impl CommentViewer {
             center(scrollable(
                 column![text(if self.is_fetching {
                     "Fetching..."
-                } else if let Some(e) = &self.error {
-                    e
                 } else {
                     "None 😭"
                 })
                 .shaping(text::Shaping::Advanced)]
-                .push_maybe(
-                    self.error
-                        .as_ref()
-                        .map(|_| button("Retry").on_press(CvMsg::RetryFetchComment)),
-                )
                 .align_x(Alignment::Center)
                 .spacing(4),
             ))
@@ -225,11 +217,6 @@ impl CommentViewer {
                 let e = format!("Failed to fetch comments: {:?}", e);
                 error!("{:?}", e);
                 self.error = Some(e);
-            }
-            CvMsg::RetryFetchComment => {
-                self.error = None;
-                self.is_fetching = true;
-                return Action::RetryFetchComment;
             }
         }
         Action::None

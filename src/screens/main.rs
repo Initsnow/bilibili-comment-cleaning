@@ -8,6 +8,8 @@ use crate::http::notify::Notify;
 use crate::screens::main::danmu_viewer::DanmuViewer;
 use crate::screens::main::notify_viewer::NotifyViewer;
 use crate::types::ChannelMsg;
+use crate::types::FetchProgressState;
+use crate::types::Result;
 use comment_viewer::CommentViewer;
 use iced::Task;
 use iced::{
@@ -27,6 +29,8 @@ pub struct Main {
     dv: DanmuViewer,
     /// Retrying the fetch requires
     pub aicu_state: bool,
+    error: Option<String>,
+    pub progress: FetchProgressState,
 }
 impl fmt::Debug for Main {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -58,6 +62,19 @@ pub enum Message {
     NotifyMsg(notify_viewer::NvMsg),
     DanmuMsg(danmu_viewer::DvMsg),
 
+    Fetched(
+        Result<(
+            Option<
+                Arc<(
+                    HashMap<u64, Notify>,
+                    HashMap<u64, Comment>,
+                    HashMap<u64, Danmu>,
+                )>,
+            >,
+            Option<FetchProgressState>,
+        )>,
+    ),
+
     RefreshUI(()),
 }
 
@@ -68,19 +85,18 @@ pub enum Action {
         comments: Arc<Mutex<HashMap<u64, Comment>>>,
         sleep_seconds: f32,
     },
-    RetryFetchComment,
 
     DeleteNotify {
         notify: Arc<Mutex<HashMap<u64, Notify>>>,
         sleep_seconds: f32,
     },
-    RetryFetchNotify,
 
     DeleteDanmu {
         danmu: Arc<Mutex<HashMap<u64, Danmu>>>,
         sleep_seconds: f32,
     },
-    RetryFetchDanmu,
+
+    RetryFetch,
 
     SendtoChannel(ChannelMsg),
     None,
@@ -109,6 +125,8 @@ impl Main {
             nv: NotifyViewer::new(),
             dv: DanmuViewer::new(),
             aicu_state,
+            error: None,
+            progress: FetchProgressState::default(),
         }
     }
     pub fn update(&mut self, message: Message) -> Action {
@@ -132,11 +150,35 @@ impl Main {
             Message::NotifyMsg(m) => return self.nv.update(m),
             Message::DanmuMsg(m) => return self.dv.update(m),
 
+            Message::Fetched(res) => {
+                if let Ok((arc_tuple, progress)) = res {
+                    if let Some(arc_tuple) = arc_tuple {
+                        let (notify, comments, danmu) = Arc::as_ref(&arc_tuple);
+                        self.nv.notify = Some(Arc::new(Mutex::new(notify.clone())));
+                        self.cv.comments = Some(Arc::new(Mutex::new(comments.clone())));
+                        self.dv.danmu = Some(Arc::new(Mutex::new(danmu.clone())));
+                    }
+                    if let Some(p) = progress {
+                        self.progress = p;
+                    }
+                } else {
+                    self.error = Some(format!("{:?}", res.err()));
+                }
+            }
+
             Message::RefreshUI(_) => {}
         }
         Action::None
     }
     pub fn view(&self) -> Element<'_, Message> {
+        if let Some(ref e) = self.error {
+            return container(
+                text(e)
+                    .shaping(text::Shaping::Advanced)
+                    .color(iced::Color::from_rgb(1.0, 0.0, 0.0)),
+            )
+            .into();
+        }
         let focus = self.focus;
         let pane_grid = pane_grid(&self.panes, |pane, state, is_maximized| {
             let is_focused = focus == Some(pane);
@@ -170,6 +212,7 @@ impl Main {
         .on_resize(10, Message::PaneResized)
         .on_click(Message::PaneClicked)
         .spacing(5);
+
         container(pane_grid).padding(5).into()
     }
 }

@@ -30,7 +30,7 @@ impl Danmu {
             notify_id: None,
         }
     }
-    fn new_with_notify(content: String, cid: u64, notify_id: u64) -> Danmu {
+    pub fn new_with_notify(content: String, cid: u64, notify_id: u64) -> Danmu {
         Danmu {
             content,
             cid,
@@ -64,25 +64,5 @@ impl RemoveAble for Danmu {
         } else {
             Err(Error::DeleteDanmuError(json_res.into()))
         }
-    }
-}
-
-async fn fetch_both(api: Arc<ApiService>) -> Result<Arc<Mutex<HashMap<u64, Danmu>>>> {
-    let (m1, m2) = try_join!(official::fetch(api.clone()), aicu::fetch(api.clone()))?;
-
-    let (m1, m2) = {
-        let mut lock1 = m1.lock().await;
-        let mut lock2 = m2.lock().await;
-        (mem::take(&mut *lock1), mem::take(&mut *lock2))
-    };
-
-    Ok(Arc::new(Mutex::new(m1.into_iter().chain(m2).collect())))
-}
-
-pub fn fetch_via_aicu_state(api: Arc<ApiService>, aicu_state: bool) -> Task<Message> {
-    if aicu_state {
-        Task::perform(fetch_both(api), |e| dvmsg::DanmusFetched(e).into())
-    } else {
-        Task::perform(official::fetch(api), |e| dvmsg::DanmusFetched(e).into())
     }
 }

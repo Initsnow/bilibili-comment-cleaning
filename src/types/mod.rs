@@ -100,3 +100,68 @@ impl From<ParseIntError> for Error {
         Self::ParseIntError(Arc::new(error))
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct LikedRecovery {
+    pub cursor_id: u64,
+    pub cursor_time: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplyedRecovery {
+    pub cursor_id: u64,
+    pub cursor_time: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AtedRecovery {
+    pub cursor_id: u64,
+    pub cursor_time: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SystemNotifyRecovery {
+    pub cursor: u64,
+    pub api_type: u8, // 0 or 1
+}
+
+#[derive(Debug, Clone)]
+pub struct AicuCommentRecovery {
+    pub uid: u64,
+    pub page: u32,
+    pub all_count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AicuDanmuRecovery {
+    pub uid: u64,
+    pub page: u32,
+    pub all_count: u64,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct FetchProgressState {
+    pub liked_data: (
+        HashMap<u64, Notify>,
+        HashMap<u64, Comment>,
+        HashMap<u64, Danmu>,
+    ),
+    pub liked_recovery: Option<LikedRecovery>,
+
+    pub replyed_data: (HashMap<u64, Notify>, HashMap<u64, Comment>),
+    pub replyed_recovery: Option<ReplyedRecovery>,
+
+    pub ated_data: HashMap<u64, Notify>,
+    pub ated_recovery: Option<AtedRecovery>,
+
+    pub system_notify_data: HashMap<u64, Notify>,
+    pub system_notify_recovery: Option<SystemNotifyRecovery>,
+
+    pub aicu_comment_data: HashMap<u64, Comment>,
+    pub aicu_comment_recovery: Option<AicuCommentRecovery>,
+
+    pub aicu_danmu_data: HashMap<u64, Danmu>,
+    pub aicu_danmu_recovery: Option<AicuDanmuRecovery>,
+
+    pub aicu_enabled_last_run: bool,
+}

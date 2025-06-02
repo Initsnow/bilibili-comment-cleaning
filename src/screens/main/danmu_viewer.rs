@@ -37,7 +37,6 @@ pub enum DvMsg {
     DanmuDeleted { id: u64 },
     AllDanmuDeleted,
     DanmusFetched(Result<Arc<Mutex<HashMap<u64, Danmu>>>>),
-    RetryFetchDanmu,
 }
 impl Default for DanmuViewer {
     fn default() -> Self {
@@ -131,17 +130,10 @@ impl DanmuViewer {
             center(scrollable(
                 column![text(if self.is_fetching {
                     "Fetching..."
-                } else if let Some(e) = &self.error {
-                    e
                 } else {
                     "None 😭"
                 })
                 .shaping(text::Shaping::Advanced)]
-                .push_maybe(
-                    self.error
-                        .as_ref()
-                        .map(|_| button("Retry").on_press(DvMsg::RetryFetchDanmu)),
-                )
                 .align_x(Alignment::Center)
                 .spacing(4),
             ))
@@ -224,11 +216,6 @@ impl DanmuViewer {
                 let e = format!("Failed to fetch danmu: {:?}", e);
                 error!("{:?}", e);
                 self.error = Some(e);
-            }
-            DvMsg::RetryFetchDanmu => {
-                self.error = None;
-                self.is_fetching = true;
-                return Action::RetryFetchDanmu;
             }
         }
         Action::None

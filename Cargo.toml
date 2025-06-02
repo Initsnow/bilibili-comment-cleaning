@@ -10,6 +10,7 @@ description = "bilibili 删除历史评论、弹幕、通知 "
 [dependencies]
 iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = ["tokio", "image", "qr_code", "debug"] }
 indicatif = "0.17.8"
+rand = "0.9.1"
 regex = "1.10.6"
 reqwest = { version = "0.12.5", features = ["cookies", "json"] }
 serde = { version = "1.0.204", features = ["derive"] }

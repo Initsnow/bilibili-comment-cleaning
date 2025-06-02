@@ -3,7 +3,7 @@ use serde::{de, Deserialize, Deserializer};
 #[derive(Deserialize, Debug)]
 pub struct Cursor {
     pub is_end: bool,
-    pub all_count: u32,
+    pub all_count: u64,
 }
 
 fn string_to_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>

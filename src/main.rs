@@ -1,3 +1,4 @@
+use bilibili_comment_cleaning::http::comment::aicu;
 use bilibili_comment_cleaning::http::{
     api_service::ApiService, comment, danmu, notify, qr_code::QRdata,
 };
@@ -76,7 +77,15 @@ impl App {
                             self.api = Arc::new(api);
                             self.screen = Screen::Main(main::Main::new(aicu_state));
 
-                            fetch_task(self.api.clone(), aicu_state)
+                            if let Screen::Main(ref m) = self.screen {
+                                fetch_task(
+                                    self.api.clone(),
+                                    self.aicu_state.load(Ordering::SeqCst),
+                                    m.progress.clone(),
+                                )
+                            } else {
+                                Task::none()
+                            }
                         }
                         cookie::Action::None => Task::none(),
                     }
@@ -99,7 +108,15 @@ impl App {
                             ));
                             self.screen = Screen::Main(main::Main::new(aicu_state));
 
-                            fetch_task(self.api.clone(), aicu_state)
+                            if let Screen::Main(ref m) = self.screen {
+                                fetch_task(
+                                    self.api.clone(),
+                                    self.aicu_state.load(Ordering::SeqCst),
+                                    m.progress.clone(),
+                                )
+                            } else {
+                                Task::none()
+                            }
                         }
                         qrcode::Action::EnterCookie => {
                             self.screen = Screen::WaitingForInputCookie(cookie::Cookie::new(
@@ -142,10 +159,7 @@ impl App {
                             ));
                             Task::none()
                         }
-                        main::Action::RetryFetchComment => comment::fetch_via_aicu_state(
-                            self.api.clone(),
-                            self.aicu_state.load(Ordering::SeqCst),
-                        ),
+
                         main::Action::DeleteNotify {
                             notify,
                             sleep_seconds,
@@ -157,7 +171,6 @@ impl App {
                             ));
                             Task::none()
                         }
-                        main::Action::RetryFetchNotify => notify::fetch_task(self.api.clone()),
                         main::Action::DeleteDanmu {
                             danmu,
                             sleep_seconds,
@@ -169,10 +182,17 @@ impl App {
                             ));
                             Task::none()
                         }
-                        main::Action::RetryFetchDanmu => danmu::fetch_via_aicu_state(
-                            self.api.clone(),
-                            self.aicu_state.load(Ordering::SeqCst),
-                        ),
+                        main::Action::RetryFetch => {
+                            if let Screen::Main(ref m) = self.screen {
+                                fetch_task(
+                                    self.api.clone(),
+                                    self.aicu_state.load(Ordering::SeqCst),
+                                    m.progress.clone(),
+                                )
+                            } else {
+                                Task::none()
+                            }
+                        }
                         main::Action::None => Task::none(),
                     }
                 } else {
@@ -211,10 +231,10 @@ impl App {
     }
 }
 
-fn fetch_task(api: Arc<ApiService>, aicu_state: bool) -> Task<Message> {
-    Task::batch([
-        notify::fetch_task(api.clone()),
-        comment::fetch_via_aicu_state(api.clone(), aicu_state)
-            .chain(danmu::fetch_via_aicu_state(api.clone(), aicu_state)),
-    ])
+fn fetch_task(
+    api: Arc<ApiService>,
+    aicu_state: bool,
+    progress: FetchProgressState,
+) -> Task<Message> {
+    notify::fetch_task(api.clone(), aicu_state, progress)
 }

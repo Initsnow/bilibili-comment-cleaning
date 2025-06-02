@@ -23,7 +23,6 @@ pub struct NotifyViewer {
     pub is_fetching: bool,
     /// select all | deselect all state
     pub select_state: bool,
-    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -36,8 +35,7 @@ pub enum NvMsg {
     StopDeleteNotify,
     NotifyDeleted { id: u64 },
     AllNotifyDeleted,
-    NotifysFetched(Result<Arc<Mutex<HashMap<u64, Notify>>>>),
-    RetryFetchNotify,
+    NotifysFetched(Arc<Mutex<HashMap<u64, Notify>>>),
 }
 impl Default for NotifyViewer {
     fn default() -> Self {
@@ -53,7 +51,6 @@ impl NotifyViewer {
             is_deleting: false,
             is_fetching: true,
             select_state: false,
-            error: None,
         }
     }
 
@@ -131,17 +128,10 @@ impl NotifyViewer {
             center(scrollable(
                 column![text(if self.is_fetching {
                     "Fetching..."
-                } else if let Some(e) = &self.error {
-                    e
                 } else {
                     "None 😭"
                 })
                 .shaping(text::Shaping::Advanced)]
-                .push_maybe(
-                    self.error
-                        .as_ref()
-                        .map(|_| button("Retry").on_press(NvMsg::RetryFetchNotify)),
-                )
                 .align_x(Alignment::Center)
                 .spacing(4),
             ))
@@ -211,20 +201,9 @@ impl NotifyViewer {
             NvMsg::AllNotifyDeleted => {
                 self.is_deleting = false;
             }
-            NvMsg::NotifysFetched(Ok(c)) => {
+            NvMsg::NotifysFetched(c) => {
                 self.is_fetching = false;
                 self.notify = Some(c);
-            }
-            NvMsg::NotifysFetched(Err(e)) => {
-                self.is_fetching = false;
-                let e = format!("Failed to fetch notify: {:?}", e);
-                error!("{:?}", e);
-                self.error = Some(e);
-            }
-            NvMsg::RetryFetchNotify => {
-                self.error = None;
-                self.is_fetching = true;
-                return Action::RetryFetchNotify;
             }
         }
         Action::None
