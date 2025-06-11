@@ -23,6 +23,7 @@ impl Default for ApiService {
                     headers
                 })
                 .cookie_store(true)
+                .use_rustls_tls()
                 .build()
                 .unwrap(),
             csrf: String::new(),
@@ -42,6 +43,7 @@ impl ApiService {
         let client = Client::builder()
             .default_headers(headers)
             .cookie_store(true)
+            .use_rustls_tls()
             .build()
             .unwrap();
 

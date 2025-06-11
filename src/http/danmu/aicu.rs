@@ -108,7 +108,9 @@ pub async fn fetch_adapted(
                 for item in data_segment.videodmlist {
                     // Avoid re-fetching cid if danmu item.id is already present,
                     // though AICU IDs should be unique.
-                    if let std::collections::hash_map::Entry::Vacant(e) = current_danmu_data.entry(item.id) {
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        current_danmu_data.entry(item.id)
+                    {
                         match get_cid(api.clone(), item.oid).await {
                             // Clone oid if it's a String
                             Ok(Some(cid_val)) => {

@@ -1,6 +1,4 @@
-use bilibili_comment_cleaning::http::{
-    api_service::ApiService, notify, qr_code::QRdata,
-};
+use bilibili_comment_cleaning::http::{api_service::ApiService, notify, qr_code::QRdata};
 use bilibili_comment_cleaning::{
     main_subscription,
     screens::{cookie, main, qrcode, Screen},
